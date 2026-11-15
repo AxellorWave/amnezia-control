@@ -2,7 +2,7 @@
 Telegram-бот для выдачи конфигов AmneziaWG (сервер Amnezia в Docker, AWG 2.0).
 
 Пользователь: заявка -> одобрение админом -> свои устройства (ПК, телефон...)
-с конфигами в трёх форматах, инструкции (rich-сообщения), виджет статуса.
+с конфигами в трёх форматах, инструкции и статус (rich-сообщения).
 Админ: панель с пользователями, заявками, конфигами из приложения и дашбордом.
 """
 import asyncio
@@ -30,7 +30,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (BufferedInputFile, CallbackQuery, InlineKeyboardButton,
-                           InlineKeyboardMarkup, InputRichMessage, Message, WidgetQuery)
+                           InlineKeyboardMarkup, InputRichMessage, Message)
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from dotenv import load_dotenv
@@ -335,6 +335,9 @@ def init_db():
         db.execute("DROP TABLE users_old")
     db.execute("""CREATE TABLE IF NOT EXISTS users (chat_id INTEGER PRIMARY KEY,
                   username TEXT, name TEXT, status TEXT, created TEXT)""")
+    # личный лимит устройств (NULL = общий MAX_DEVICES)
+    if "max_devices" not in [r[1] for r in db.execute("PRAGMA table_info(users)")]:
+        db.execute("ALTER TABLE users ADD COLUMN max_devices INTEGER")
     db.commit()
 
 
@@ -427,13 +430,69 @@ def has_access(uid: int) -> bool:
     return bool(u and u["status"] == "approved")
 
 
+def device_limit(uid: int) -> int | None:
+    """Лимит устройств: личный, если задан, иначе MAX_DEVICES; у админов — без лимита (None)."""
+    if is_admin(uid):
+        return None
+    u = get_user(uid)
+    return u["max_devices"] if u and u["max_devices"] is not None else MAX_DEVICES
+
+
 def own_device(uid: int, dev_id: int):
     d = get_device(dev_id)
     return d if d and (d["chat_id"] == uid or is_admin(uid)) else None
 
 
-def btn(text: str, data: str | None = None, url: str | None = None, style: str | None = None):
+# ============================================================ оформление ===
+# Кастомные эмодзи (пак Telegram iOS Icons, t.me/addemoji/tgiosicons).
+# Работают, если у владельца бота Telegram Premium. Без Premium Telegram
+# отклоняет их — тогда бот сам переключается на обычные эмодзи.
+
+CUSTOM_EMOJI = os.getenv("CUSTOM_EMOJI", "1").strip().lower() not in ("0", "false", "no", "off")
+
+EMOJI = {   # имя: (обычный эмодзи, id кастомного)
+    "vpn": ("🛡", "6030445631921721471"),       "home": ("🏠", "6042137469204303531"),
+    "devices": ("🗂", "5766994197705921104"),   "device": ("🔳", "5771652845652677093"),
+    "add": ("➕", "5882207227997066107"),       "help": ("ℹ️", "6028435952299413210"),
+    "status": ("📊", "5936143551854285132"),    "admin": ("👑", "5805553606635559688"),
+    "users": ("👥", "6032609071373226027"),     "user": ("👤", "6035084557378654059"),
+    "pending": ("⏳", "5891211339170326418"),   "app": ("📦", "5778672437122045013"),
+    "denied": ("🚫", "5938215362473496448"),    "back": ("⬅️", "5960671702059848143"),
+    "key": ("🔑", "5776078972659962594"),       "qr": ("📷", "5766975922620076409"),
+    "file": ("📄", "6050643982646513651"),      "trash": ("🗑", "6039522349517115015"),
+    "android": ("🤖", "6030400221232501136"),   "apple": ("🍏", "5775870512127283512"),
+    "download": ("⬇️", "6039802767931871481"),  "ok": ("✅", "5774022692642492953"),
+    "no": ("❌", "5774077015388852135"),        "edit": ("✏️", "6039779802741739617"),
+    "refresh": ("🔁", "6030657343744644592"),   "send": ("⬆️", "6039391666547201160"),
+    "hello": ("👋", "6041921818896372382"),     "party": ("🎉", "6041731551845159060"),
+    "warn": ("❗️", "6030563507299160824"),      "globe": ("🌐", "5776233299424843260"),
+    "lock": ("🔒", "6037249452824072506"),      "calendar": ("📅", "5890937706803894250"),
+    "traffic": ("📈", "5938539885907415367"),   "pin": ("📍", "6042011682497106307"),
+    "reset": ("↩️", "5778432163766604235"),     "restore": ("👤", "5891207662678317861"),
+    "revoke": ("👤", "5893192487324880883"),    "again": ("🔁", "6030657343744644592"),
+    "clock": ("⏰", "5983150113483134607"),      "question": ("❓", "6030848053177486888"),
+    "sad": ("☹️", "6042029429301973188"),       "idea": ("💡", "5891120964468480450"),
+    "bell": ("🔔", "6039486778597970865"),      "link": ("🔗", "6028171274939797252"),
+}
+EMOJI_BY_ID = {cid: plain for plain, cid in EMOJI.values()}
+
+
+def em(name: str) -> str:
+    """Эмодзи для текста сообщения: кастомный (tg-emoji) или обычный."""
+    plain, cid = EMOJI[name]
+    return f'<tg-emoji emoji-id="{cid}">{plain}</tg-emoji>' if CUSTOM_EMOJI else plain
+
+
+def btn(text: str, data: str | None = None, url: str | None = None, style: str | None = None,
+        icon: str | None = None):
+    """Кнопка; icon — имя из EMOJI (кастомная иконка или обычный эмодзи перед текстом)."""
     kw = {"text": text}
+    if icon:
+        plain, cid = EMOJI[icon]
+        if CUSTOM_EMOJI:
+            kw["icon_custom_emoji_id"] = cid
+        else:
+            kw["text"] = f"{plain} {text}"
     if url:
         kw["url"] = url
     else:
@@ -451,40 +510,121 @@ def kb(*rows) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[list(r) for r in rows if r])
 
 
+def strip_custom(text: str, markup: InlineKeyboardMarkup | None):
+    """Убрать кастомные эмодзи из текста и кнопок (оставить обычные)."""
+    text = re.sub(r'<tg-emoji emoji-id="\d+">(.*?)</tg-emoji>', r"\1", text or "", flags=re.S)
+    if markup:
+        rows = []
+        for row in markup.inline_keyboard:
+            new = []
+            for b in row:
+                if b.icon_custom_emoji_id:
+                    plain = EMOJI_BY_ID.get(b.icon_custom_emoji_id, "")
+                    b = b.model_copy(update={"icon_custom_emoji_id": None,
+                                             "text": f"{plain} {b.text}".strip()})
+                new.append(b)
+            rows.append(new)
+        markup = InlineKeyboardMarkup(inline_keyboard=rows)
+    return text, markup
+
+
+def emoji_error(e: Exception) -> bool:
+    s = str(e).upper()
+    return "EMOJI" in s or "ICON" in s or "PREMIUM" in s
+
+
+async def with_emoji_fallback(call, text: str, markup):
+    """call(text, markup); если Telegram не принял кастомные эмодзи — повтор без них."""
+    global CUSTOM_EMOJI
+    if not CUSTOM_EMOJI:
+        text, markup = strip_custom(text, markup)
+    try:
+        return await call(text, markup)
+    except TelegramBadRequest as e:
+        if not (CUSTOM_EMOJI and emoji_error(e)):
+            raise
+        log.warning("кастомные эмодзи недоступны (нужен Premium у владельца бота): %s", e)
+        CUSTOM_EMOJI = False
+        return await call(*strip_custom(text, markup))
+
+
+def rich(html_text: str) -> InputRichMessage:
+    return InputRichMessage(html=html_text.strip())
+
+
+async def send_view(bot: Bot, chat_id: int, text: str, markup: InlineKeyboardMarkup | None = None):
+    """Прислать rich-сообщение; если rich недоступен — обычный HTML."""
+    try:
+        return await with_emoji_fallback(
+            lambda t, mk: bot.send_rich_message(chat_id=chat_id, rich_message=rich(t),
+                                                reply_markup=mk), text, markup)
+    except Exception as e:
+        log.warning("rich message failed, fallback: %s", e)
+    return await with_emoji_fallback(
+        lambda t, mk: bot.send_message(chat_id, rich_to_plain(t), reply_markup=mk,
+                                       disable_web_page_preview=True), text, markup)
+
+
+async def edit_view(m: Message, text: str, markup: InlineKeyboardMarkup | None) -> bool:
+    """Отредактировать сообщение в rich (или обычный HTML). False — если это нельзя."""
+    for make in (lambda t: {"rich_message": rich(t)},
+                 lambda t: {"text": rich_to_plain(t), "disable_web_page_preview": True}):
+        try:
+            await with_emoji_fallback(
+                lambda t, mk: m.bot.edit_message_text(chat_id=m.chat.id, message_id=m.message_id,
+                                                      reply_markup=mk, **make(t)), text, markup)
+            return True
+        except TelegramBadRequest as e:
+            if "not modified" in str(e):
+                return True
+            log.debug("edit failed: %s", e)
+        except Exception as e:
+            log.debug("edit failed: %s", e)
+    return False
+
+
 async def show(target, text: str, markup: InlineKeyboardMarkup | None = None):
     """Отредактировать сообщение с кнопкой, а если нельзя — прислать новое."""
     if isinstance(target, CallbackQuery):
-        try:
-            await target.message.edit_text(text, reply_markup=markup)
+        if await edit_view(target.message, text, markup):
             return
-        except TelegramBadRequest as e:
-            if "not modified" in str(e):
-                return
-        await target.message.answer(text, reply_markup=markup)
-    else:
-        await target.answer(text, reply_markup=markup)
+        target = target.message
+    await send_view(target.bot, target.chat.id, text, markup)
 
 
-async def send_rich(bot: Bot, chat_id: int, rich_html: str, markup=None):
-    """Rich-сообщение (Bot API 10.1+), при ошибке — обычный HTML."""
+async def notify(bot: Bot, chat_id: int, text: str, markup=None) -> bool:
+    """Уведомление пользователю/админу; False — если бот заблокирован или чат недоступен."""
     try:
-        await bot.send_rich_message(chat_id=chat_id, rich_message=InputRichMessage(html=rich_html),
-                                    reply_markup=markup)
+        await send_view(bot, chat_id, text, markup)
+        return True
     except Exception as e:
-        log.warning("rich message failed, fallback: %s", e)
-        await bot.send_message(chat_id, rich_to_plain(rich_html), reply_markup=markup,
-                               disable_web_page_preview=True)
+        log.warning("notify %s failed: %s", chat_id, e)
+        return False
 
 
 def rich_to_plain(s: str) -> str:
+    """Rich HTML -> обычный Telegram HTML (для клиентов/API без rich-сообщений)."""
     s = re.sub(r"<h[1-6]>(.*?)</h[1-6]>", r"\n<b>\1</b>\n", s, flags=re.S)
     s = re.sub(r"<summary>(.*?)</summary>", r"\n<b>\1</b>\n", s, flags=re.S)
+    s = re.sub(r"<caption>(.*?)</caption>", r"<b>\1</b>\n", s, flags=re.S)
+    s = re.sub(r"</t[dh]>\s*<t[dh][^>]*>", " · ", s)
+    s = re.sub(r"</?t[dh][^>]*>|<tr[^>]*>", "", s)
     s = re.sub(r"<li>", "• ", s)
-    s = re.sub(r"</li>|</p>|<br\s*/?>|<hr\s*/?>", "\n", s)
+    s = re.sub(r"</li>|</p>|</tr>|<br\s*/?>|<hr\s*/?>", "\n", s)
     s = re.sub(r"<footer>(.*?)</footer>", r"\n<i>\1</i>", s, flags=re.S)
-    s = re.sub(r"</?(p|ol|ul|details|section|div)[^>]*>", "", s)
+    s = re.sub(r"<blockquote[^>]*>", "<blockquote>", s)
+    s = re.sub(r"</?(p|ol|ul|details|section|div|table|aside|mark|cite)[^>]*>", "", s)
     s = re.sub(r"\n\s*\n(?=• )", "\n", s)
     return re.sub(r"\n{3,}", "\n\n", s).strip()
+
+
+def user_line(u) -> str:
+    """Имя (ссылка на профиль) · @username (ссылка) · ID."""
+    uid = u["chat_id"]
+    name = esc(u["name"] or "без имени")
+    uname = (f'<a href="https://t.me/{esc(u["username"])}">@{esc(u["username"])}</a>'
+             if u["username"] else "<i>без username</i>")
+    return f'<a href="tg://user?id={uid}">{name}</a> · {uname} · ID <code>{uid}</code>'
 
 
 # ======================================================== тексты и меню ===
@@ -496,23 +636,61 @@ class AddDevice(StatesGroup):
     name = State()
 
 
+class SetLimit(StatesGroup):
+    value = State()
+
+
+def table(rows, head=None, caption: str = "") -> str:
+    """Компактная rich-таблица; rows — списки ячеек (уже с HTML)."""
+    out = ["<table bordered striped compact>"]
+    if caption:
+        out.append(f"<caption>{caption}</caption>")
+    if head:
+        out.append("<tr>" + "".join(f"<th>{h}</th>" for h in head) + "</tr>")
+    for r in rows:
+        out.append("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>")
+    out.append("</table>")
+    return "".join(out)
+
+
+def kv(rows) -> str:
+    """Таблица «название — значение»."""
+    return "<table bordered compact>" + "".join(
+        f"<tr><td>{k}</td><td>{v}</td></tr>" for k, v in rows) + "</table>"
+
+
+def user_table(u) -> str:
+    """Карточка человека: имя со ссылкой на профиль, username, ID."""
+    uid = u["chat_id"]
+    uname = (f'<a href="https://t.me/{esc(u["username"])}">@{esc(u["username"])}</a>'
+             if u["username"] else "<i>нет</i>")
+    return kv([(f"{em('user')} Имя", f'<a href="tg://user?id={uid}">{esc(u["name"] or "без имени")}</a>'),
+               (f"{em('link')} Username", uname),
+               ("🆔 ID", f"<code>{uid}</code>")])
+
+
+def dot(st) -> str:
+    return "🟢" if is_online(st) else "⚪️"
+
+
 def main_menu(uid: int) -> tuple[str, InlineKeyboardMarkup]:
     u = get_user(uid)
     n = len(user_devices(uid))
-    limit = "" if is_admin(uid) else f" из {MAX_DEVICES}"
+    lim = device_limit(uid)
+    limit = "" if lim is None else f" из {lim}"
     name = esc(u["name"].split()[0]) if u and u["name"] else "друг"
-    text = (f"🛡 <b>Привет, {name}!</b>\n\n"
-            f"Это твой личный VPN. Здесь можно выпустить конфиг для каждого устройства "
-            f"и посмотреть, как подключиться.\n\n"
-            f"📱 Устройств: <b>{n}{limit}</b>\n"
-            f"🌐 Сервер: <code>{esc(VPN_HOST)}</code>")
+    text = (f"<h2>{em('vpn')} Привет, {name}!</h2>"
+            f"<p>Это твой личный VPN. Здесь можно выпустить конфиг для каждого устройства "
+            f"и посмотреть, как подключиться.</p>"
+            + kv([(f"{em('devices')} Устройств", f"<b>{n}{limit}</b>"),
+                  (f"{em('globe')} Сервер", f"<code>{esc(VPN_HOST)}</code>")]))
     rows = [
-        [btn("📱 Мои устройства", "devs")],
-        [btn("➕ Добавить устройство", "add", style="primary")],
-        [btn("📖 Как подключиться", "help"), btn("📊 Статус", "status")],
+        [btn("Мои устройства", "devs", icon="devices")],
+        [btn("Добавить устройство", "add", style="primary", icon="add")],
+        [btn("Как подключиться", "help", icon="help"), btn("Статус", "status", icon="status")],
     ]
     if is_admin(uid):
-        rows.append([btn("👑 Админка", "adm")])
+        rows.append([btn("Админка", "adm", icon="admin")])
     return text, kb(*rows)
 
 
@@ -521,16 +699,17 @@ def devices_menu(uid: int) -> tuple[str, InlineKeyboardMarkup]:
     stats = peer_stats() if devs else {}
     rows = []
     for d in devs:
-        dot = "🟢" if is_online(stats.get(d["pub"])) else "⚪️"
-        rows.append([btn(f"{dot} {d['name']}", f"dev:{d['id']}")])
-    rows.append([btn("➕ Добавить устройство", "add", style="primary")])
-    rows.append([btn("← Меню", "menu")])
+        rows.append([btn(f"{dot(stats.get(d['pub']))} {d['name']}", f"dev:{d['id']}")])
+    rows.append([btn("Добавить устройство", "add", style="primary", icon="add")])
+    rows.append([btn("Меню", "menu", icon="back")])
+    text = f"<h2>{em('devices')} Мои устройства</h2>"
     if devs:
-        text = ("📱 <b>Мои устройства</b>\n\n"
-                "Выбери устройство, чтобы получить его конфиг.\n🟢 — сейчас подключено")
+        text += table([[dot(stats.get(d["pub"])), f"<b>{esc(d['name'])}</b>",
+                        fmt_seen(stats[d["pub"]]["hs"] if d["pub"] in stats else 0)] for d in devs],
+                      head=["", "Устройство", "Подключение"])
+        text += "<p>Выбери устройство, чтобы получить его конфиг. 🟢 — сейчас подключено.</p>"
     else:
-        text = ("📱 <b>Мои устройства</b>\n\nПока пусто. Добавь первое устройство — "
-                "например, «Телефон» или «Ноутбук».")
+        text += ("<p>Пока пусто. Добавь первое устройство — например, «Телефон» или «Ноутбук».</p>")
     return text, kb(*rows)
 
 
@@ -541,36 +720,47 @@ def device_card(d) -> tuple[str, InlineKeyboardMarkup]:
         created = datetime.fromisoformat(d["created"]).strftime("%d.%m.%Y")
     except Exception:
         pass
-    traffic = (f"\n📶 Трафик: ↓ {fmt_bytes(st['rx'])}  ↑ {fmt_bytes(st['tx'])}"
-               if st and (st["rx"] or st["tx"]) else "")
     status = "🟢 в сети" if is_online(st) else f"⚪️ {fmt_seen(st['hs'] if st else 0)}"
-    text = (f"📱 <b>{esc(d['name'])}</b>\n\n"
-            f"Статус: {status}{traffic}\n"
-            f"IP в VPN: <code>{d['ip']}</code>\n"
-            f"Создано: {created}\n\n"
-            f"Выбери формат конфига 👇\n"
-            f"<i>🔑 Ключ — самый простой способ для AmneziaVPN и DefaultVPN.</i>")
+    info = [("Статус", status)]
+    if st and (st["rx"] or st["tx"]):
+        info.append((f"{em('traffic')} Трафик", f"↓ {fmt_bytes(st['rx'])} · ↑ {fmt_bytes(st['tx'])}"))
+    info += [(f"{em('pin')} IP в VPN", f"<code>{d['ip']}</code>"),
+             (f"{em('calendar')} Создано", created)]
+    text = (f"<h2>{em('device')} {esc(d['name'])}</h2>" + kv(info) +
+            f"<p>Выбери формат конфига 👇</p>"
+            f"<blockquote>{em('key')} <b>Ключ</b> — самый простой способ для AmneziaVPN "
+            f"и DefaultVPN.</blockquote>")
     i = d["id"]
     return text, kb(
-        [btn("🔑 Ключ для приложения", f"fmt:{i}:key", style="success")],
-        [btn("📷 QR-код", f"fmt:{i}:qr"), btn("📄 Файл .conf", f"fmt:{i}:file")],
-        [btn("📖 Как подключиться", "help")],
-        [btn("🗑 Удалить", f"del:{i}", style="danger"), btn("← Назад", "devs")],
+        [btn("Ключ для приложения", f"fmt:{i}:key", style="success", icon="key")],
+        [btn("QR-код", f"fmt:{i}:qr", icon="qr"), btn("Файл .conf", f"fmt:{i}:file", icon="file")],
+        [btn("Как подключиться", "help", icon="help")],
+        [btn("Удалить", f"del:{i}", style="danger", icon="trash"), btn("Назад", "devs", icon="back")],
     )
 
 
-HELP_MENU = ("📖 <b>Как подключиться</b>\n\n"
-             "Выбери, что у тебя за устройство — пришлю пошаговую инструкцию.")
+def help_menu() -> tuple[str, InlineKeyboardMarkup]:
+    text = (f"<h2>{em('help')} Как подключиться</h2>"
+            f"<p>Выбери, что у тебя за устройство — покажу пошаговую инструкцию.</p>"
+            + table([[f"{em('android')} Android", "AmneziaVPN"],
+                     [f"{em('apple')} iPhone (iOS 17+)", "DefaultVPN"],
+                     ["iOS 15–16, Windows, старые Android", "AmneziaWG + файл .conf"]],
+                    head=["Устройство", "Приложение"]))
+    return text, kb([btn("Android", "guide:android", icon="android"),
+                     btn("iPhone", "guide:ios", icon="apple")],
+                    [btn("Меню", "menu", icon="back")])
 
-GUIDE_ANDROID = """
-<h2>🤖 Android — AmneziaVPN</h2>
+
+def guide_android() -> str:
+    return f"""
+<h2>{em('android')} Android — AmneziaVPN</h2>
 <p>Официальное приложение Amnezia из Google Play. Подключение займёт минуту.</p>
 
 <h3>1. Установи приложение</h3>
 <p>Нажми кнопку <b>«Google Play»</b> под сообщением и установи <b>AmneziaVPN</b>.</p>
 
 <h3>2. Скопируй ключ</h3>
-<p>В боте: <b>Мои устройства → твоё устройство → 🔑 Ключ для приложения</b>. Нажми на ключ — он скопируется целиком.</p>
+<p>В боте: <b>Мои устройства → твоё устройство → Ключ для приложения</b>. Нажми на ключ — он скопируется целиком.</p>
 
 <h3>3. Добавь подключение</h3>
 <ol>
@@ -581,7 +771,7 @@ GUIDE_ANDROID = """
 </ol>
 
 <details>
-<summary>Не получается?</summary>
+<summary>{em('question')} Не получается?</summary>
 <ul>
 <li>Приложения нет в Google Play — скачай APK с официального GitHub Amnezia (раздел Releases).</li>
 <li>Вместо ключа можно отсканировать <b>QR-код</b> с экрана другого устройства или импортировать <b>файл .conf</b>.</li>
@@ -589,18 +779,20 @@ GUIDE_ANDROID = """
 </ul>
 </details>
 
-<footer>🔒 Ключ — как пароль: не пересылай его другим людям.</footer>
+<footer>{em('lock')} Ключ — как пароль: не пересылай его другим людям.</footer>
 """
 
-GUIDE_IOS = """
-<h2>🍏 iPhone — DefaultVPN</h2>
+
+def guide_ios() -> str:
+    return f"""
+<h2>{em('apple')} iPhone — DefaultVPN</h2>
 <p>AmneziaVPN убрали из российского App Store, поэтому используем <b>DefaultVPN</b> — альтернативное приложение от разработчиков Amnezia. Нужна iOS 17 или новее.</p>
 
 <h3>1. Установи приложение</h3>
 <p>Нажми кнопку <b>«App Store»</b> под сообщением и установи <b>DefaultVPN</b>.</p>
 
 <h3>2. Скопируй ключ</h3>
-<p>В боте: <b>Мои устройства → твоё устройство → 🔑 Ключ для приложения</b>. Нажми на ключ — он скопируется целиком.</p>
+<p>В боте: <b>Мои устройства → твоё устройство → Ключ для приложения</b>. Нажми на ключ — он скопируется целиком.</p>
 
 <h3>3. Добавь подключение</h3>
 <ol>
@@ -611,7 +803,7 @@ GUIDE_IOS = """
 </ol>
 
 <details>
-<summary>Не получается?</summary>
+<summary>{em('question')} Не получается?</summary>
 <ul>
 <li>Если App Store у тебя не российский — можно поставить и сам <b>AmneziaVPN</b>, шаги те же.</li>
 <li>iOS 15–16: используй приложение <b>AmneziaWG</b> и <b>файл .conf</b> из бота.</li>
@@ -619,44 +811,18 @@ GUIDE_IOS = """
 </ul>
 </details>
 
-<footer>🔒 Ключ — как пароль: не пересылай его другим людям.</footer>
+<footer>{em('lock')} Ключ — как пароль: не пересылай его другим людям.</footer>
 """
 
 
-# ================================================================ виджет ===
-# HTML-виджет (Bot API 10.4): данные лежат в chat_data, кнопка «Обновить»
-# отправляет запрос боту, бот обновляет chat_data через editMessageWidgetData.
+# ================================================================ статус ===
+# Статус устройств (у пользователя) и дашборд сервера (у админа) —
+# rich-сообщение с таблицей; «Обновить» перерисовывает его на месте.
 
-WIDGET_HTML = """<style>
-body{margin:0;font:14px/1.35 -apple-system,system-ui,sans-serif;color:var(--tg-theme-text-color)}
-.w{padding:12px 14px}.h{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
-.t{font-weight:700;font-size:16px}.u{color:var(--tg-theme-hint-color);font-size:12px}
-.s{display:flex;gap:8px;margin-bottom:8px}.c{flex:1;background:var(--tg-theme-secondary-bg-color);border-radius:12px;padding:8px 4px;text-align:center}
-.c b{display:block;font-size:18px}.c span{font-size:11px;color:var(--tg-theme-hint-color)}
-.r{display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--tg-theme-section-separator-color)}
-.d{display:block;width:9px;height:9px;border-radius:50%;background:var(--tg-theme-hint-color);opacity:.45;flex:none}
-.on .d{background:#34c759;opacity:1;box-shadow:0 0 6px #34c759}
-.n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
-.m{font-size:11px;color:var(--tg-theme-hint-color);text-align:right;white-space:nowrap}
-.e{color:var(--tg-theme-hint-color);text-align:center;padding:8px 0}
-button{margin-top:10px;width:100%;border:0;border-radius:10px;padding:9px;font:600 14px system-ui;background:var(--tg-theme-button-color);color:var(--tg-theme-button-text-color)}
-</style><div class="w"><div class="h"><div class="t" id="t"></div><div class="u" id="u"></div></div>
-<div class="s" id="s"></div><div id="l"></div><button id="b">↻ Обновить</button></div>
-<script>
-const W=window.TelegramWidget,$=i=>document.getElementById(i);let D={};
-const e=x=>String(x).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-function r(){try{D=JSON.parse(W.chatData)||{}}catch(_){D={}}
-$('t').textContent=D.h||'VPN';$('u').textContent=D.u?'обновлено '+D.u:'';
-$('s').innerHTML=(D.s||[]).map(x=>'<div class="c"><b>'+e(x[1])+'</b><span>'+e(x[0])+'</span></div>').join('');
-const l=D.d||[];$('l').innerHTML=l.length?l.map(x=>'<div class="r'+(x[1]?' on':'')+'"><i class="d"></i><div class="n">'+e(x[0])+'</div><div class="m">'+e(x[4])+'<br>↓ '+e(x[2])+' · ↑ '+e(x[3])+'</div></div>').join('')+(D.m?'<div class="e">и ещё '+D.m+'</div>':''):'<div class="e">Устройств пока нет</div>'}
-if(W){W.onEvent('chatDataChanged',r);r();W.ready();
-$('b').addEventListener('click',()=>{const b=$('b');b.textContent='Обновляю…';
-try{W.HapticFeedback.impactOccurred('light')}catch(_){}
-W.request(D.k||'u').then(()=>{b.textContent='↻ Обновить'},()=>{b.textContent='Не вышло, ещё раз'})})}
-</script>"""
+STATUS_ROWS_MAX = 100
 
 
-def widget_data(kind: str, uid: int) -> str:
+def status_view(kind: str, uid: int) -> tuple[str, InlineKeyboardMarkup]:
     stats = peer_stats()
     rows = []
     if kind == "a":                       # админ: все клиенты сервера
@@ -665,64 +831,43 @@ def widget_data(kind: str, uid: int) -> str:
             "LEFT JOIN users u ON u.chat_id=d.chat_id")}
         for p in server_peers():
             d = users.get(p["pub"])
-            name = (f"{d['username'] or d['chat_id']} · {d['name']}" if d else f"📲 {p['name']}")
+            if d:
+                who = f"@{d['username']}" if d["username"] else str(d["chat_id"])
+                name = f"{esc(who)} · {esc(d['name'])}"
+            else:
+                name = f"{em('app')} {esc(p['name'])}"
             rows.append((name, p["pub"]))
-        title = "Сервер"
+        title = f"{em('status')} Сервер"
     else:
-        rows = [(d["name"], d["pub"]) for d in user_devices(uid)]
-        title = "Мои устройства"
+        rows = [(esc(d["name"]), d["pub"]) for d in user_devices(uid)]
+        title = f"{em('status')} Мои устройства"
 
     items = []
     for name, pub in rows:
         st = stats.get(pub, {"hs": 0, "rx": 0, "tx": 0})
-        items.append([name[:28], 1 if is_online(st) else 0, fmt_bytes(st["rx"]),
-                      fmt_bytes(st["tx"]), fmt_seen(st["hs"]), st["hs"]])
-    items.sort(key=lambda x: (-x[1], -x[5]))
-    online = sum(x[1] for x in items)
-    total = sum(stats.get(p, {}).get("rx", 0) + stats.get(p, {}).get("tx", 0) for _, p in rows)
-    summary = [["в сети", online], ["устройств", len(items)], ["трафик", fmt_bytes(total)]]
+        items.append((is_online(st), st["hs"], name, st))
+    items.sort(key=lambda x: (-x[0], -x[1]))
+    online = sum(1 for x in items if x[0])
+    total = sum(x[3]["rx"] + x[3]["tx"] for x in items)
+    summary = [["🟢 в сети", f"<b>{online}</b>"], [f"{em('devices')} устройств", f"<b>{len(items)}</b>"]]
     if kind == "a":
-        summary[2] = ["людей", db.execute(
-            "SELECT COUNT(*) FROM users WHERE status='approved'").fetchone()[0]]
+        people = db.execute("SELECT COUNT(*) FROM users WHERE status='approved'").fetchone()[0]
+        summary.append([f"{em('users')} людей", f"<b>{people}</b>"])
+    summary.append([f"{em('traffic')} трафик", f"<b>{fmt_bytes(total)}</b>"])
 
-    data = {"k": kind, "h": title, "u": datetime.now().strftime("%H:%M"), "s": summary,
-            "d": [x[:5] for x in items]}
-    # chat_data максимум 1024 байта — лишние строки сворачиваем в «и ещё N»
-    while len(json.dumps(data, ensure_ascii=False).encode()) > 1000 and data["d"]:
-        data["d"].pop()
-        data["m"] = len(items) - len(data["d"])
-    return json.dumps(data, ensure_ascii=False)
-
-
-async def send_status_widget(bot: Bot, chat_id: int, kind: str, uid: int):
-    data = await asyncio.to_thread(widget_data, kind, uid)
-    try:
-        await bot.send_widget(chat_id=chat_id, html=WIDGET_HTML, chat_data=data,
-                              allow_queries=True,
-                              reply_markup=kb([btn("← Меню", "menu")]))
-    except Exception as e:                # клиент/сервер без виджетов — текстом
-        log.warning("widget failed, fallback: %s", e)
-        d = json.loads(data)
-        lines = [f"📊 <b>{esc(d['h'])}</b>  <i>{d['u']}</i>\n",
-                 " · ".join(f"{s[0]}: <b>{s[1]}</b>" for s in d["s"]), ""]
-        for x in d["d"]:
-            lines.append(f"{'🟢' if x[1] else '⚪️'} {esc(x[0])} — {x[4]}, ↓{x[2]} ↑{x[3]}")
-        if d.get("m"):
-            lines.append(f"…и ещё {d['m']}")
-        await bot.send_message(chat_id, "\n".join(lines), reply_markup=kb([btn("← Меню", "menu")]))
-
-
-@dp.widget_query()
-async def on_widget_query(q: WidgetQuery, bot: Bot):
-    kind = "a" if q.data == "a" and is_admin(q.from_user.id) else "u"
-    if not has_access(q.from_user.id):
-        return await bot.answer_widget_query(widget_query_id=q.id, data="denied")
-    data = await asyncio.to_thread(widget_data, kind, q.from_user.id)
-    try:
-        await bot.edit_message_widget_data(chat_id=q.chat.id, message_id=q.message_id,
-                                           chat_data=data)
-    finally:
-        await bot.answer_widget_query(widget_query_id=q.id, data="ok")
+    text = f"<h2>{title}</h2>" + kv(summary)
+    if items:
+        text += table([[("🟢" if on else "⚪️"), name, fmt_seen(hs),
+                        f"↓ {fmt_bytes(st['rx'])}<br>↑ {fmt_bytes(st['tx'])}"]
+                       for on, hs, name, st in items[:STATUS_ROWS_MAX]],
+                      head=["", "Устройство", "Подключение", "Трафик"])
+        if len(items) > STATUS_ROWS_MAX:
+            text += f"<p><i>…и ещё {len(items) - STATUS_ROWS_MAX}</i></p>"
+    else:
+        text += "<p>Устройств пока нет.</p>"
+    text += f"<footer>{em('clock')} обновлено {datetime.now().strftime('%H:%M:%S')}</footer>"
+    back = btn("Админка", "adm", icon="back") if kind == "a" else btn("Меню", "menu", icon="back")
+    return text, kb([btn("Обновить", "adm:dash" if kind == "a" else "status", icon="refresh")], [back])
 
 
 # ======================================================= пользователь ===
@@ -740,14 +885,16 @@ async def start(m: Message, bot: Bot, state: FSMContext):
         set_user(uid, username=m.from_user.username, name=m.from_user.full_name)
         return await show(m, *main_menu(uid))
     if u and u["status"] == "pending":
-        return await m.answer("⏳ Заявка уже у администратора. Как только её одобрят — я напишу.")
+        return await show(m, f"<p>{em('pending')} <b>Заявка уже у администратора.</b></p>"
+                             f"<p>Как только её одобрят — я напишу.</p>")
     if u and u["status"] in ("denied", "revoked"):
-        return await m.answer("🚫 Доступ не выдан. Если это ошибка — напиши администратору.")
+        return await show(m, f"<p>{em('denied')} <b>Доступ не выдан.</b></p>"
+                             f"<p>Если это ошибка — напиши администратору.</p>")
 
-    await m.answer(
-        "👋 <b>Привет!</b>\n\nЭто бот для подключения к приватному VPN.\n"
-        "Доступ выдаёт администратор — отправить ему заявку?",
-        reply_markup=kb([btn("📨 Отправить заявку", "request", style="primary")]))
+    await show(m, f"<h2>{em('hello')} Привет!</h2>"
+                  f"<p>Это бот для подключения к приватному VPN.</p>"
+                  f"<blockquote>{em('lock')} Доступ выдаёт администратор — отправить ему заявку?</blockquote>",
+               kb([btn("Отправить заявку", "request", style="primary", icon="send")]))
 
 
 @dp.callback_query(F.data == "request")
@@ -757,14 +904,14 @@ async def send_request(cb: CallbackQuery, bot: Bot):
     if u and u["status"] in ("pending", "approved", "denied", "revoked"):
         return await cb.answer("Заявка уже отправлена")
     set_user(uid, username=cb.from_user.username, name=cb.from_user.full_name, status="pending")
-    await show(cb, "📨 <b>Заявка отправлена!</b>\n\nКак только администратор её одобрит — я напишу.")
-    uname = f"@{cb.from_user.username}" if cb.from_user.username else "без username"
+    await show(cb, f"<h3>{em('send')} Заявка отправлена!</h3>"
+                   f"<p>Как только администратор её одобрит — я напишу.</p>")
+    u = get_user(uid)
     for admin in ADMIN_IDS:
-        await bot.send_message(
-            admin, f"📨 <b>Новая заявка на VPN</b>\n\n👤 {esc(cb.from_user.full_name)} ({esc(uname)})\n"
-                   f"🆔 <code>{uid}</code>",
-            reply_markup=kb([btn("✅ Одобрить", f"ok:{uid}", style="success"),
-                             btn("❌ Отклонить", f"no:{uid}", style="danger")]))
+        await notify(bot, admin, f"<h3>{em('bell')} Новая заявка на VPN</h3>" + user_table(u),
+                     kb([btn("Одобрить", f"ok:{uid}", style="success", icon="ok"),
+                         btn("Отклонить", f"no:{uid}", style="danger", icon="no")],
+                        [btn("Карточка", f"u:{uid}", icon="user")]))
     await cb.answer()
 
 
@@ -792,12 +939,14 @@ async def ask_name(cb: CallbackQuery, state: FSMContext):
     uid = cb.from_user.id
     if not has_access(uid):
         return await cb.answer("Доступ не выдан", show_alert=True)
-    if not is_admin(uid) and len(user_devices(uid)) >= MAX_DEVICES:
-        return await cb.answer(f"Максимум {MAX_DEVICES} устройств. Удали ненужное.", show_alert=True)
+    lim = device_limit(uid)
+    if lim is not None and len(user_devices(uid)) >= lim:
+        return await cb.answer(f"Максимум {lim} устройств. Удали ненужное.", show_alert=True)
     await state.set_state(AddDevice.name)
-    await show(cb, "✏️ <b>Новое устройство</b>\n\nКак его назвать? Просто напиши в ответ.\n\n"
-                   "<i>Например: Телефон, Ноутбук, ПК, iPad мамы</i>",
-               kb([btn("Отмена", "devs")]))
+    await show(cb, f"<h3>{em('edit')} Новое устройство</h3>"
+                   f"<p>Как его назвать? Просто напиши в ответ.</p>"
+                   f"<blockquote><i>Например: Телефон, Ноутбук, ПК, iPad мамы</i></blockquote>",
+               kb([btn("Отмена", "devs", icon="no")]))
     await cb.answer()
 
 
@@ -811,26 +960,29 @@ async def create_device(m: Message, bot: Bot, state: FSMContext):
         await state.clear()
         return await show(m, *main_menu(uid))
     if not 1 <= len(name) <= 32:
-        return await m.answer("Название должно быть от 1 до 32 символов. Попробуй ещё раз.")
+        return await show(m, f"<p>{em('warn')} Название должно быть от 1 до 32 символов. "
+                             f"Попробуй ещё раз.</p>")
     if any(d["name"].lower() == name.lower() for d in user_devices(uid)):
-        return await m.answer("Такое устройство уже есть — придумай другое название.")
-    if not is_admin(uid) and len(user_devices(uid)) >= MAX_DEVICES:
+        return await show(m, f"<p>{em('warn')} Такое устройство уже есть — придумай другое название.</p>")
+    lim = device_limit(uid)
+    if lim is not None and len(user_devices(uid)) >= lim:
         await state.clear()
-        return await m.answer(f"Максимум {MAX_DEVICES} устройств.")
+        return await show(m, f"<p>{em('warn')} Максимум {lim} устройств.</p>")
 
     await state.clear()
     u = get_user(uid)
-    wait = await m.answer("⏳ Создаю конфиг…")
+    wait = await send_view(bot, m.chat.id, f"<p>{em('pending')} Создаю конфиг…</p>")
     try:
         async with wg_lock:
             c = await asyncio.to_thread(add_peer, f"{owner_label(u)} — {name}")
     except Exception as e:
         log.exception("add_peer failed")
-        await bot.edit_message_text("😕 Не получилось создать конфиг. Администратор уже в курсе.",
-                                    chat_id=m.chat.id, message_id=wait.message_id)
+        fail = f"<p>{em('sad')} Не получилось создать конфиг. Администратор уже в курсе.</p>"
+        if not await edit_view(wait, fail, None):
+            await send_view(bot, m.chat.id, fail)
         for admin in ADMIN_IDS:
-            await bot.send_message(admin, f"⚠️ Ошибка создания устройства для "
-                                          f"{esc(owner_label(u))}:\n<code>{esc(e)}</code>")
+            await notify(bot, admin, f"<h3>{em('warn')} Ошибка создания устройства</h3>"
+                                     + user_table(u) + f"<pre>{esc(e)}</pre>")
         return
 
     cur = db.execute("""INSERT INTO devices (chat_id, name, ip, priv, pub, psk, created)
@@ -842,11 +994,14 @@ async def create_device(m: Message, bot: Bot, state: FSMContext):
     except Exception:
         pass
     text, markup = await asyncio.to_thread(device_card, get_device(cur.lastrowid))
-    await m.answer("✅ Готово! " + text, reply_markup=markup)
+    await send_view(bot, m.chat.id, f"<p>{em('party')} <b>Готово!</b> Устройство создано.</p>" + text,
+                    markup)
     if not is_admin(uid):
         for admin in ADMIN_IDS:
-            await bot.send_message(admin, f"ℹ️ {esc(owner_label(u))} добавил устройство "
-                                          f"«{esc(name)}» ({c['ip']})")
+            await notify(bot, admin, f"<h3>{em('bell')} Новое устройство</h3>" + user_table(u)
+                         + kv([(f"{em('device')} Устройство", f"«{esc(name)}»"),
+                               (f"{em('pin')} IP", f"<code>{c['ip']}</code>")]),
+                         kb([btn("Карточка", f"u:{uid}", icon="user")]))
 
 
 @dp.callback_query(F.data.startswith("dev:"))
@@ -860,7 +1015,7 @@ async def cb_device(cb: CallbackQuery):
 
 
 @dp.callback_query(F.data.startswith("fmt:"))
-async def send_config(cb: CallbackQuery):
+async def send_config(cb: CallbackQuery, bot: Bot):
     _, dev_id, fmt = cb.data.split(":")
     d = own_device(cb.from_user.id, int(dev_id))
     if not d or not has_access(cb.from_user.id):
@@ -868,32 +1023,39 @@ async def send_config(cb: CallbackQuery):
     await cb.answer()
 
     info = await asyncio.to_thread(server_info)
-    back = kb([btn("📖 Как подключиться", "help"), btn("← К устройству", f"dev:{d['id']}")])
+    back = kb([btn("Как подключиться", "help", icon="help"),
+               btn("К устройству", f"dev:{d['id']}", icon="back")])
     name = esc(d["name"])
+    chat_id = cb.message.chat.id
 
     if fmt == "key":
         key = amnezia_key(d, info, d["name"])
-        await cb.message.answer(
-            f"🔑 <b>Ключ для «{name}»</b>\n\nНажми на ключ — он скопируется. Затем вставь его "
-            f"в <b>AmneziaVPN</b> (Android) или <b>DefaultVPN</b> (iPhone).\n\n<pre>{key}</pre>",
-            reply_markup=back)
+        await send_view(bot, chat_id,
+                        f"<h3>{em('key')} Ключ для «{name}»</h3>"
+                        f"<p>Нажми на ключ — он скопируется. Затем вставь его в <b>AmneziaVPN</b> "
+                        f"(Android) или <b>DefaultVPN</b> (iPhone).</p><pre>{key}</pre>"
+                        f"<footer>{em('lock')} Ключ — как пароль: не пересылай его другим людям.</footer>",
+                        back)
     elif fmt == "qr":
         conf = client_conf(d, info)
         try:
             png = qr_png(conf)
         except Exception:
-            return await cb.message.answer("Конфиг слишком длинный для QR — возьми ключ или файл.",
-                                           reply_markup=back)
-        await cb.message.answer_photo(
-            BufferedInputFile(png, filename="qr.png"),
-            caption=f"📷 <b>QR-код для «{name}»</b>\n\nОтсканируй его в AmneziaVPN или "
-                    f"AmneziaWG с другого устройства.", reply_markup=back)
+            return await send_view(bot, chat_id, f"<p>{em('warn')} Конфиг слишком длинный для QR — "
+                                                 f"возьми ключ или файл.</p>", back)
+        await with_emoji_fallback(
+            lambda t, mk: bot.send_photo(chat_id, BufferedInputFile(png, filename="qr.png"),
+                                         caption=t, reply_markup=mk),
+            f"{em('qr')} <b>QR-код для «{name}»</b>\n\nОтсканируй его в AmneziaVPN или "
+            f"AmneziaWG с другого устройства.", back)
     elif fmt == "file":
         conf = client_conf(d, info)
-        await cb.message.answer_document(
-            BufferedInputFile(conf.encode(), filename=f"{file_name(d['name'])}.conf"),
-            caption=f"📄 <b>Файл для «{name}»</b>\n\nОткрой его в AmneziaVPN, DefaultVPN "
-                    f"или AmneziaWG.", reply_markup=back)
+        await with_emoji_fallback(
+            lambda t, mk: bot.send_document(
+                chat_id, BufferedInputFile(conf.encode(), filename=f"{file_name(d['name'])}.conf"),
+                caption=t, reply_markup=mk),
+            f"{em('file')} <b>Файл для «{name}»</b>\n\nОткрой его в AmneziaVPN, DefaultVPN "
+            f"или AmneziaWG.", back)
 
 
 @dp.callback_query(F.data.startswith("del:"))
@@ -901,10 +1063,11 @@ async def ask_delete(cb: CallbackQuery):
     d = own_device(cb.from_user.id, int(cb.data.split(":")[1]))
     if not d:
         return await cb.answer("Устройство не найдено", show_alert=True)
-    await show(cb, f"🗑 <b>Удалить «{esc(d['name'])}»?</b>\n\n"
-                   f"Конфиг на этом устройстве сразу перестанет работать.",
-               kb([btn("Да, удалить", f"delok:{d['id']}", style="danger"),
-                   btn("Отмена", f"dev:{d['id']}")]))
+    await show(cb, f"<h3>{em('trash')} Удалить «{esc(d['name'])}»?</h3>"
+                   f"<blockquote>{em('warn')} Конфиг на этом устройстве сразу перестанет работать."
+                   f"</blockquote>",
+               kb([btn("Да, удалить", f"delok:{d['id']}", style="danger", icon="trash"),
+                   btn("Отмена", f"dev:{d['id']}", icon="no")]))
     await cb.answer()
 
 
@@ -924,12 +1087,9 @@ async def do_delete(cb: CallbackQuery, bot: Bot):
     await delete_device(d)
     await cb.answer(f"«{d['name']}» удалено")
     if d["chat_id"] != uid:           # админ удалил чужое
-        try:
-            await bot.send_message(d["chat_id"], f"🗑 Администратор удалил устройство "
-                                                 f"«{esc(d['name'])}».")
-        except Exception:
-            pass
-        text, markup = user_card(d["chat_id"])
+        await notify(bot, d["chat_id"], f"<p>{em('trash')} Администратор удалил устройство "
+                                        f"«{esc(d['name'])}».</p>")
+        text, markup = await asyncio.to_thread(user_card, d["chat_id"])
     else:
         text, markup = await asyncio.to_thread(devices_menu, uid)
     await show(cb, text, markup)
@@ -937,45 +1097,48 @@ async def do_delete(cb: CallbackQuery, bot: Bot):
 
 @dp.callback_query(F.data == "help")
 async def cb_help(cb: CallbackQuery):
-    await show(cb, HELP_MENU, kb([btn("🤖 Android", "guide:android"), btn("🍏 iPhone", "guide:ios")],
-                                 [btn("← Меню", "menu")]))
+    await show(cb, *help_menu())
     await cb.answer()
 
 
 @dp.message(Command("help"))
 async def cmd_help(m: Message):
-    await show(m, HELP_MENU, kb([btn("🤖 Android", "guide:android"), btn("🍏 iPhone", "guide:ios")],
-                                [btn("← Меню", "menu")]))
+    await show(m, *help_menu())
 
 
 @dp.callback_query(F.data.startswith("guide:"))
-async def cb_guide(cb: CallbackQuery, bot: Bot):
+async def cb_guide(cb: CallbackQuery):
     await cb.answer()
     if cb.data.endswith("android"):
-        guide, store = GUIDE_ANDROID, btn("⬇️ Google Play", url=ANDROID_URL)
+        guide, store = guide_android(), btn("Google Play", url=ANDROID_URL, icon="download")
     else:
-        guide, store = GUIDE_IOS, btn("⬇️ App Store", url=IOS_URL)
-    await send_rich(bot, cb.message.chat.id, guide.strip(),
-                    kb([store], [btn("📱 Мои устройства", "devs"), btn("← Меню", "menu")]))
+        guide, store = guide_ios(), btn("App Store", url=IOS_URL, icon="download")
+    await show(cb, guide, kb([store], [btn("Мои устройства", "devs", icon="devices"),
+                                       btn("Назад", "help", icon="back")]))
 
 
 @dp.callback_query(F.data == "status")
-async def cb_status(cb: CallbackQuery, bot: Bot):
+async def cb_status(cb: CallbackQuery):
     if not has_access(cb.from_user.id):
         return await cb.answer("Доступ не выдан", show_alert=True)
+    await show(cb, *(await asyncio.to_thread(status_view, "u", cb.from_user.id)))
     await cb.answer()
-    await send_status_widget(bot, cb.message.chat.id, "u", cb.from_user.id)
 
 
 # ================================================================ админ ===
 
 STATUS_ICON = {"approved": "✅", "pending": "⏳", "denied": "❌", "revoked": "🚫"}
+STATUS_EMOJI = {"approved": "ok", "pending": "pending", "denied": "no", "revoked": "denied"}
+STATUS_NAME = {"approved": "доступ есть", "pending": "заявка", "denied": "отклонён",
+               "revoked": "доступ отозван"}
+USERS_LIST_MAX = 90
 
 
 def admin_menu() -> tuple[str, InlineKeyboardMarkup]:
     q = lambda sql: db.execute(sql).fetchone()[0]
     approved = q("SELECT COUNT(*) FROM users WHERE status='approved'")
     pending = q("SELECT COUNT(*) FROM users WHERE status='pending'")
+    denied = q("SELECT COUNT(*) FROM users WHERE status IN ('denied', 'revoked')")
     devices = q("SELECT COUNT(*) FROM devices")
     try:
         peers = server_peers()
@@ -986,78 +1149,112 @@ def admin_menu() -> tuple[str, InlineKeyboardMarkup]:
         srv = f"🟢 работает, порт {server_info()['port']}"
     except Exception as e:
         app_n, online, srv = "?", "?", f"🔴 ошибка: {esc(str(e)[:100])}"
-    text = (f"👑 <b>Админка</b>\n\n"
-            f"Сервер: {srv}\n"
-            f"🌐 <code>{esc(VPN_HOST)}</code>\n\n"
-            f"👥 Пользователей: <b>{approved}</b>\n"
-            f"⏳ Заявок: <b>{pending}</b>\n"
-            f"📱 Устройств через бота: <b>{devices}</b>\n"
-            f"📲 Из приложения: <b>{app_n}</b>\n"
-            f"🟢 Сейчас в сети: <b>{online}</b>")
-    rows = [[btn("👥 Пользователи", "adm:users"), btn(f"⏳ Заявки ({pending})", "adm:pending")],
-            [btn("📲 Из приложения", "adm:app"), btn("📊 Дашборд", "adm:dash")],
-            [btn("← Меню", "menu")]]
+    text = (f"<h2>{em('admin')} Админка</h2>"
+            + kv([(f"{em('vpn')} Сервер", srv),
+                  (f"{em('globe')} Адрес", f"<code>{esc(VPN_HOST)}</code>")])
+            + table([[f"{em('users')} Пользователей", f"<b>{approved}</b>"],
+                     [f"{em('pending')} Заявок", f"<b>{pending}</b>"],
+                     [f"{em('denied')} Отклонённых", f"<b>{denied}</b>"],
+                     [f"{em('devices')} Устройств через бота", f"<b>{devices}</b>"],
+                     [f"{em('app')} Из приложения", f"<b>{app_n}</b>"],
+                     ["🟢 Сейчас в сети", f"<b>{online}</b>"]]))
+    rows = [[btn("Пользователи", "adm:users", icon="users"),
+             btn(f"Заявки ({pending})", "adm:pending", icon="pending")],
+            [btn("Из приложения", "adm:app", icon="app"), btn("Дашборд", "adm:dash", icon="status")],
+            [btn(f"Отклонённые ({denied})", "adm:denied", icon="denied")],
+            [btn("Меню", "menu", icon="back")]]
     return text, kb(*rows)
 
 
-def users_list(pending_only: bool = False) -> tuple[str, InlineKeyboardMarkup]:
-    sql = "SELECT * FROM users" + (" WHERE status='pending'" if pending_only else "") + \
+USERS_FILTER = {"pending": " WHERE status='pending'",
+                "denied": " WHERE status IN ('denied', 'revoked')"}
+
+
+def users_list(flt: str = "") -> tuple[str, InlineKeyboardMarkup]:
+    """flt: "" — все, "pending" — заявки, "denied" — отклонённые и отозванные."""
+    sql = "SELECT * FROM users" + USERS_FILTER.get(flt, "") + \
           " ORDER BY status='approved' DESC, created"
-    rows = []
-    for u in db.execute(sql):
+    users = db.execute(sql).fetchall()
+    rows, lines = [], []
+    for u in users[:USERS_LIST_MAX]:
         n = len(user_devices(u["chat_id"]))
-        rows.append([btn(f"{STATUS_ICON.get(u['status'], '?')} {u['name']} · 📱{n}",
-                         f"u:{u['chat_id']}")])
-    rows.append([btn("← Админка", "adm")])
-    title = "⏳ <b>Заявки</b>" if pending_only else "👥 <b>Пользователи</b>"
-    empty = "\n\nПусто." if len(rows) == 1 else "\n\nВыбери человека:"
-    return title + empty, kb(*rows)
+        who = f"@{u['username']}" if u["username"] else str(u["chat_id"])
+        rows.append([btn(f"{u['name'] or 'без имени'} · {who} · 📱{n}", f"u:{u['chat_id']}",
+                         icon=STATUS_EMOJI.get(u["status"]))])
+        lines.append([STATUS_ICON.get(u["status"], "?"), user_line(u), str(n)])
+    rows.append([btn("Админка", "adm", icon="back")])
+    title = {"pending": f"{em('pending')} Заявки",
+             "denied": f"{em('denied')} Отклонённые и отозванные"}.get(flt, f"{em('users')} Пользователи")
+    text = f"<h2>{title}</h2>"
+    if not users:
+        text += "<p>Пусто.</p>"
+    else:
+        text += table(lines, head=["", "Человек", "📱"])
+        if len(users) > USERS_LIST_MAX:
+            text += f"<p><i>Показаны первые {USERS_LIST_MAX} из {len(users)}.</i></p>"
+        text += "<p>Нажми на человека, чтобы открыть карточку.</p>"
+    return text, kb(*rows)
 
 
 def user_card(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
     u = get_user(chat_id)
     if not u:
-        return "Пользователь не найден.", kb([btn("← Пользователи", "adm:users")])
+        return (f"<p>{em('warn')} Пользователь не найден.</p>",
+                kb([btn("Пользователи", "adm:users", icon="back")]))
     devs = user_devices(chat_id)
     stats = peer_stats() if devs else {}
-    lines = [f"{STATUS_ICON.get(u['status'], '?')} <b>{esc(u['name'])}</b>",
-             f"{esc(owner_label(u))} · 🆔 <code>{u['chat_id']}</code>",
-             f"С нами с {(u['created'] or '')[:10]}", ""]
-    rows = []
-    for d in devs:
-        st = stats.get(d["pub"])
-        dot = "🟢" if is_online(st) else "⚪️"
-        lines.append(f"{dot} {esc(d['name'])} — <code>{d['ip']}</code>, {fmt_seen(st['hs'] if st else 0)}")
-        rows.append([btn(f"🗑 {d['name']}", f"del:{d['id']}")])
-    if not devs:
-        lines.append("Устройств нет.")
+    if is_admin(chat_id):
+        limit = "без ограничений (админ)"
+    elif u["max_devices"] is None:
+        limit = f"{MAX_DEVICES} (по умолчанию)"
+    else:
+        limit = f"<b>{u['max_devices']}</b> (по умолчанию {MAX_DEVICES})"
     s = u["status"]
+    text = (f"<h2>{em(STATUS_EMOJI.get(s, 'user'))} {esc(u['name'] or 'без имени')}</h2>"
+            + user_table(u)
+            + kv([("Статус", f"{STATUS_ICON.get(s, '?')} {STATUS_NAME.get(s, esc(s))}"),
+                  (f"{em('calendar')} С нами с", (u["created"] or "")[:10]),
+                  (f"{em('devices')} Лимит устройств", limit)]))
+    rows = []
+    if devs:
+        text += table([[dot(stats.get(d["pub"])), esc(d["name"]), f"<code>{d['ip']}</code>",
+                        fmt_seen(stats[d["pub"]]["hs"] if d["pub"] in stats else 0)] for d in devs],
+                      head=["", "Устройство", "IP", "Подключение"],
+                      caption=f"Устройства ({len(devs)})")
+        for d in devs:
+            rows.append([btn(d["name"], f"del:{d['id']}", icon="trash")])
+    else:
+        text += "<p>Устройств нет.</p>"
     if s == "pending":
-        rows.append([btn("✅ Одобрить", f"ok:{chat_id}", style="success"),
-                     btn("❌ Отклонить", f"no:{chat_id}", style="danger")])
+        rows.append([btn("Одобрить", f"ok:{chat_id}", style="success", icon="ok"),
+                     btn("Отклонить", f"no:{chat_id}", style="danger", icon="no")])
     elif s == "approved" and not is_admin(chat_id):
-        rows.append([btn("🚫 Отозвать доступ", f"rv:{chat_id}", style="danger")])
+        rows.append([btn("Отозвать доступ", f"rv:{chat_id}", style="danger", icon="revoke")])
     elif s in ("denied", "revoked"):
-        rows.append([btn("♻️ Разрешить заявку снова", f"al:{chat_id}")])
-    rows.append([btn("← Пользователи", "adm:users")])
-    return "\n".join(lines), kb(*rows)
+        rows.append([btn("Вернуть доступ", f"rs:{chat_id}", style="success", icon="restore")])
+        rows.append([btn("Разрешить заявку снова", f"al:{chat_id}", icon="again")])
+    if not is_admin(chat_id):
+        rows.append([btn("Лимит устройств", f"lim:{chat_id}", icon="edit")])
+    rows.append([btn("Пользователи", "adm:users", icon="back")])
+    return text, kb(*rows)
 
 
 def app_list() -> tuple[str, InlineKeyboardMarkup]:
     mine = bot_pubs()
     stats = peer_stats()
     peers = [p for p in server_peers() if p["pub"] not in mine]
-    lines = ["📲 <b>Конфиги из приложения AmneziaVPN</b>", ""]
+    text = f"<h2>{em('app')} Конфиги из приложения AmneziaVPN</h2>"
     rows = []
-    for p in peers:
-        st = stats.get(p["pub"])
-        dot = "🟢" if is_online(st) else "⚪️"
-        lines.append(f"{dot} {esc(p['name'])} — <code>{p['ip']}</code>, {fmt_seen(st['hs'] if st else 0)}")
-        rows.append([btn(f"🗑 {p['name']}", f"ap:{p['ip']}")])
-    if not peers:
-        lines.append("Таких нет — все конфиги выпущены через бота.")
-    rows.append([btn("← Админка", "adm")])
-    return "\n".join(lines), kb(*rows)
+    if peers:
+        text += table([[dot(stats.get(p["pub"])), esc(p["name"]), f"<code>{p['ip']}</code>",
+                        fmt_seen(stats[p["pub"]]["hs"] if p["pub"] in stats else 0)] for p in peers],
+                      head=["", "Имя", "IP", "Подключение"])
+        for p in peers:
+            rows.append([btn(p["name"], f"ap:{p['ip']}", icon="trash")])
+    else:
+        text += "<p>Таких нет — все конфиги выпущены через бота.</p>"
+    rows.append([btn("Админка", "adm", icon="back")])
+    return text, kb(*rows)
 
 
 def admin_only(handler):
@@ -1082,16 +1279,17 @@ async def cmd_admin(m: Message):
         await show(m, *(await asyncio.to_thread(admin_menu)))
 
 
-@dp.callback_query(F.data.in_({"adm:users", "adm:pending"}))
+@dp.callback_query(F.data.in_({"adm:users", "adm:pending", "adm:denied"}))
 @admin_only
 async def cb_users(cb: CallbackQuery):
-    await show(cb, *users_list(cb.data == "adm:pending"))
+    await show(cb, *users_list(cb.data[4:] if cb.data != "adm:users" else ""))
     await cb.answer()
 
 
 @dp.callback_query(F.data.startswith("u:"))
 @admin_only
-async def cb_user(cb: CallbackQuery):
+async def cb_user(cb: CallbackQuery, state: FSMContext):
+    await state.clear()
     await show(cb, *(await asyncio.to_thread(user_card, int(cb.data[2:]))))
     await cb.answer()
 
@@ -1105,9 +1303,9 @@ async def cb_app(cb: CallbackQuery):
 
 @dp.callback_query(F.data == "adm:dash")
 @admin_only
-async def cb_dash(cb: CallbackQuery, bot: Bot):
+async def cb_dash(cb: CallbackQuery):
+    await show(cb, *(await asyncio.to_thread(status_view, "a", cb.from_user.id)))
     await cb.answer()
-    await send_status_widget(bot, cb.message.chat.id, "a", cb.from_user.id)
 
 
 @dp.callback_query(F.data.startswith("ok:"))
@@ -1118,24 +1316,48 @@ async def approve(cb: CallbackQuery, bot: Bot):
     if not u:
         return await cb.answer("Пользователь не найден", show_alert=True)
     set_user(chat_id, status="approved")
-    await show(cb, f"✅ <b>{esc(u['name'])}</b> ({esc(owner_label(u))}) — одобрено",
-               kb([btn("👤 Открыть", f"u:{chat_id}")]))
-    await bot.send_message(chat_id, "🎉 <b>Доступ одобрен!</b>\n\nДобавь своё первое устройство, "
-                                    "а потом загляни в «Как подключиться».",
-                           reply_markup=kb([btn("➕ Добавить устройство", "add", style="primary")],
-                                           [btn("📖 Как подключиться", "help")]))
-    await cb.answer("Одобрено")
+    await show(cb, f"<h3>{em('ok')} Заявка одобрена</h3>" + user_table(u),
+               kb([btn("Открыть карточку", f"u:{chat_id}", icon="user")]))
+    sent = await notify_approved(bot, chat_id)
+    await cb.answer("Одобрено" if sent else "Одобрено, но написать ему не вышло",
+                    show_alert=not sent)
+
+
+async def notify_approved(bot: Bot, chat_id: int) -> bool:
+    """Сообщить об одобрении; False — если бот заблокирован или чат недоступен."""
+    return await notify(bot, chat_id,
+                        f"<h2>{em('party')} Доступ одобрен!</h2>"
+                        f"<p>Добавь своё первое устройство, а потом загляни в «Как подключиться».</p>",
+                        kb([btn("Добавить устройство", "add", style="primary", icon="add")],
+                           [btn("Как подключиться", "help", icon="help")]))
+
+
+@dp.callback_query(F.data.startswith("rs:"))
+@admin_only
+async def restore(cb: CallbackQuery, bot: Bot):
+    chat_id = int(cb.data[3:])
+    u = get_user(chat_id)
+    if not u:
+        return await cb.answer("Пользователь не найден", show_alert=True)
+    if u["status"] not in ("denied", "revoked"):
+        return await cb.answer("Доступ уже не закрыт", show_alert=True)
+    set_user(chat_id, status="approved")
+    sent = await notify_approved(bot, chat_id)
+    await cb.answer("Доступ возвращён" if sent else
+                    "Доступ возвращён, но написать ему не вышло (бот заблокирован?)",
+                    show_alert=not sent)
+    await show(cb, *(await asyncio.to_thread(user_card, chat_id)))
 
 
 @dp.callback_query(F.data.startswith("no:"))
 @admin_only
 async def deny(cb: CallbackQuery, bot: Bot):
     chat_id = int(cb.data[3:])
-    u = get_user(chat_id)
     set_user(chat_id, status="denied")
-    await show(cb, f"❌ <b>{esc(u['name'] if u else chat_id)}</b> — отклонено",
-               kb([btn("👤 Открыть", f"u:{chat_id}")]))
-    await bot.send_message(chat_id, "😕 К сожалению, заявка отклонена.")
+    u = get_user(chat_id)
+    await show(cb, f"<h3>{em('no')} Заявка отклонена</h3>" + user_table(u),
+               kb([btn("Открыть карточку", f"u:{chat_id}", icon="user")]))
+    await notify(bot, chat_id, f"<p>{em('sad')} К сожалению, заявка отклонена.</p>")
     await cb.answer("Отклонено")
 
 
@@ -1144,10 +1366,11 @@ async def deny(cb: CallbackQuery, bot: Bot):
 async def ask_revoke(cb: CallbackQuery):
     chat_id = int(cb.data[3:])
     u = get_user(chat_id)
-    await show(cb, f"🚫 <b>Отозвать доступ у {esc(u['name'])}?</b>\n\n"
-                   f"Все его устройства ({len(user_devices(chat_id))}) перестанут работать.",
-               kb([btn("Да, отозвать", f"rvok:{chat_id}", style="danger"),
-                   btn("Отмена", f"u:{chat_id}")]))
+    await show(cb, f"<h3>{em('revoke')} Отозвать доступ?</h3>" + user_table(u)
+                   + f"<blockquote>{em('warn')} Все его устройства ({len(user_devices(chat_id))}) "
+                     f"перестанут работать.</blockquote>",
+               kb([btn("Да, отозвать", f"rvok:{chat_id}", style="danger", icon="revoke"),
+                   btn("Отмена", f"u:{chat_id}", icon="no")]))
     await cb.answer()
 
 
@@ -1158,10 +1381,7 @@ async def do_revoke(cb: CallbackQuery, bot: Bot):
     for d in user_devices(chat_id):
         await delete_device(d)
     set_user(chat_id, status="revoked")
-    try:
-        await bot.send_message(chat_id, "🚫 Твой доступ к VPN отозван.")
-    except Exception:
-        pass
+    await notify(bot, chat_id, f"<p>{em('denied')} Твой доступ к VPN отозван.</p>")
     await cb.answer("Доступ отозван")
     await show(cb, *(await asyncio.to_thread(user_card, chat_id)))
 
@@ -1176,6 +1396,76 @@ async def allow_again(cb: CallbackQuery):
     await show(cb, *users_list())
 
 
+LIMIT_MAX = 100
+
+
+@dp.callback_query(F.data.startswith("lim:"))
+@admin_only
+async def ask_limit(cb: CallbackQuery, state: FSMContext):
+    chat_id = int(cb.data[4:])
+    u = get_user(chat_id)
+    if not u:
+        return await cb.answer("Пользователь не найден", show_alert=True)
+    await state.set_state(SetLimit.value)
+    await state.update_data(chat_id=chat_id)
+    cur = "по умолчанию" if u["max_devices"] is None else str(u["max_devices"])
+    await show(cb, f"<h3>{em('edit')} Лимит устройств</h3>" + user_table(u)
+                   + kv([("Сейчас", cur), ("Общий лимит", str(MAX_DEVICES))])
+                   + f"<p>Пришли число от 0 до {LIMIT_MAX}. Чтобы вернуть общий лимит — "
+                     f"нажми «Сбросить» или пришли «-».</p>",
+               kb([btn("Сбросить", f"limrs:{chat_id}", icon="reset"),
+                   btn("Отмена", f"u:{chat_id}", icon="no")]))
+    await cb.answer()
+
+
+def limit_saved(chat_id: int, value: int | None) -> str:
+    set_user(chat_id, max_devices=value)
+    n = len(user_devices(chat_id))
+    text = (f"<p>{em('ok')} Лимит устройств: <b>{value}</b></p>" if value is not None else
+            f"<p>{em('ok')} Лимит сброшен — общий, <b>{MAX_DEVICES}</b></p>")
+    lim = MAX_DEVICES if value is None else value
+    if n > lim:
+        text += (f"<blockquote>{em('warn')} Сейчас у него {n} устройств — они останутся, "
+                 f"но добавить новые не получится, пока их не станет меньше {lim}.</blockquote>")
+    return text
+
+
+@dp.callback_query(F.data.startswith("limrs:"))
+@admin_only
+async def reset_limit(cb: CallbackQuery, state: FSMContext):
+    chat_id = int(cb.data[6:])
+    await state.clear()
+    if not get_user(chat_id):
+        return await cb.answer("Пользователь не найден", show_alert=True)
+    text = limit_saved(chat_id, None)
+    await cb.answer()
+    card, markup = await asyncio.to_thread(user_card, chat_id)
+    await show(cb, text + card, markup)
+
+
+@dp.message(SetLimit.value, F.text)
+async def set_limit(m: Message, state: FSMContext):
+    if not is_admin(m.from_user.id):
+        return await state.clear()
+    chat_id = (await state.get_data()).get("chat_id")
+    raw = m.text.strip()
+    if raw.startswith("/") or not chat_id or not get_user(chat_id):
+        await state.clear()
+        return await show(m, "<p>Отменено.</p>")
+    if raw == "-":
+        value = None
+    elif raw.isdigit() and 0 <= int(raw) <= LIMIT_MAX:
+        value = int(raw)
+    else:
+        return await show(m, f"<p>{em('warn')} Нужно целое число от 0 до {LIMIT_MAX} или «-» "
+                             f"для сброса. Попробуй ещё раз.</p>",
+                          kb([btn("Отмена", f"u:{chat_id}", icon="no")]))
+    await state.clear()
+    text = limit_saved(chat_id, value)
+    card, markup = await asyncio.to_thread(user_card, chat_id)
+    await show(m, text + card, markup)
+
+
 @dp.callback_query(F.data.startswith("ap:"))
 @admin_only
 async def ask_del_app(cb: CallbackQuery):
@@ -1183,9 +1473,11 @@ async def ask_del_app(cb: CallbackQuery):
     p = next((p for p in await asyncio.to_thread(server_peers) if p["ip"] == ip), None)
     if not p:
         return await cb.answer("Не найден", show_alert=True)
-    await show(cb, f"🗑 <b>Удалить «{esc(p['name'])}»</b> ({ip})?\n\n"
-                   f"Конфиг, выпущенный в приложении, перестанет работать.",
-               kb([btn("Да, удалить", f"apok:{ip}", style="danger"), btn("Отмена", "adm:app")]))
+    await show(cb, f"<h3>{em('trash')} Удалить «{esc(p['name'])}» ({ip})?</h3>"
+                   f"<blockquote>{em('warn')} Конфиг, выпущенный в приложении, перестанет работать."
+                   f"</blockquote>",
+               kb([btn("Да, удалить", f"apok:{ip}", style="danger", icon="trash"),
+                   btn("Отмена", "adm:app", icon="no")]))
     await cb.answer()
 
 
