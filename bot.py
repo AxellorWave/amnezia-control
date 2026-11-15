@@ -1458,7 +1458,7 @@ def users_list(flt: str = "") -> tuple[str, InlineKeyboardMarkup]:
     for u in users[:USERS_LIST_MAX]:
         n = len(user_devices(u["chat_id"]))
         who = f"@{u['username']}" if u["username"] else str(u["chat_id"])
-        rows.append([btn(f"{u['name'] or 'без имени'} · {who} · 📱{n}", f"u:{u['chat_id']}",
+        rows.append([btn(f"{u['name'] or 'без имени'} · {who} · {n} устр.", f"u:{u['chat_id']}",
                          icon=STATUS_EMOJI.get(u["status"]))])
         rx, tx = user_traffic(u["chat_id"])
         lines.append([em(STATUS_EMOJI.get(u["status"], "question")), user_line(u), str(n),
