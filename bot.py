@@ -40,6 +40,7 @@ load_dotenv()
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 ADMIN_IDS = {int(x) for x in os.environ["ADMIN_IDS"].split(",") if x.strip()}
 VPN_HOST = os.environ["VPN_HOST"]
+SERVER_NAME = os.getenv("SERVER_NAME", "").strip() or "vpn"   # имя сервера в AmneziaVPN
 CONTAINER = os.getenv("CONTAINER", "amnezia-awg2")
 CONF_DIR = os.getenv("CONF_DIR", "/opt/amnezia/awg")
 IFACE = os.getenv("IFACE", "awg0")
@@ -264,7 +265,7 @@ def client_conf(c, info: dict, dns: str | None = None) -> str:
     )
 
 
-def amnezia_key(c, info: dict, name: str) -> str:
+def amnezia_key(c, info: dict) -> str:
     """Ключ vpn:// в том же формате, что «Поделиться» в AmneziaVPN."""
     obf = info["obf"]
     last_config = {
@@ -295,7 +296,7 @@ def amnezia_key(c, info: dict, name: str) -> str:
     data = {
         "containers": [{"awg": awg, "container": CONTAINER}],
         "defaultContainer": CONTAINER,
-        "description": name,
+        "description": SERVER_NAME,
         "dns1": DNS1,
         "dns2": DNS2,
         "format_version": 1,
@@ -1029,7 +1030,7 @@ async def send_config(cb: CallbackQuery, bot: Bot):
     chat_id = cb.message.chat.id
 
     if fmt == "key":
-        key = amnezia_key(d, info, d["name"])
+        key = amnezia_key(d, info)
         await send_view(bot, chat_id,
                         f"<h3>{em('key')} Ключ для «{name}»</h3>"
                         f"<p>Нажми на ключ — он скопируется. Затем вставь его в <b>AmneziaVPN</b> "
