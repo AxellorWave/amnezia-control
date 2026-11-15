@@ -1,0 +1,11 @@
+services:
+  bot:
+    build: .
+    container_name: amnezia-bot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DB_PATH=/data/bot.db
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock   # доступ к контейнеру Амнезии
+      - ./data:/data                                # база пользователей и устройств
