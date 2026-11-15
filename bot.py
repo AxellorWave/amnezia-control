@@ -8,6 +8,7 @@ Telegram-бот для выдачи конфигов AmneziaWG (сервер Amn
 import asyncio
 import functools
 import base64
+import gzip
 import html
 import io
 import ipaddress
@@ -20,9 +21,11 @@ import sqlite3
 import struct
 import subprocess
 import time
+import urllib.request
 import zlib
-from datetime import datetime
+from datetime import date, datetime
 
+import maxminddb
 import qrcode
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
@@ -53,6 +56,9 @@ MTU = os.getenv("MTU", "1280")
 KEEPALIVE = os.getenv("KEEPALIVE", "")          # пусто = как в приложении (25-35 для AWG 2)
 MAX_DEVICES = int(os.getenv("MAX_DEVICES", "5"))
 DB_PATH = os.getenv("DB_PATH", "bot.db")
+# локальная база стран по IP (DB-IP Lite, CC BY 4.0, https://db-ip.com) — бот скачивает сам
+GEOIP_DB = os.getenv("GEOIP_DB") or os.path.join(os.path.dirname(os.path.abspath(DB_PATH)),
+                                                 "dbip-country-lite.mmdb")
 
 ANDROID_URL = "https://play.google.com/store/apps/details?id=org.amnezia.vpn"
 IOS_URL = "https://apps.apple.com/app/defaultvpn/id6744725017"
@@ -479,6 +485,7 @@ EMOJI = {   # имя: (обычный эмодзи, id кастомного)
     "bell": ("🔔", "6039486778597970865"),      "link": ("🔗", "6028171274939797252"),
     "windows": ("🪟", "5366318141771096216"),   "linux": ("🐧", "5208428250547633632"),
     "online": ("🟢", "5330533835765462529"),    "offline": ("⚪️", "5330203192003146212"),
+    "error": ("🔴", "5974083768233760323"),
 }
 EMOJI_BY_ID = {cid: plain for plain, cid in EMOJI.values() if cid}
 
@@ -691,7 +698,7 @@ def main_menu(uid: int) -> tuple[str, InlineKeyboardMarkup]:
             f"<p>Это твой личный VPN. Здесь можно выпустить конфиг для каждого устройства "
             f"и посмотреть, как подключиться.</p>"
             + kv([(f"{em('devices')} Устройств", f"<b>{n}{limit}</b>"),
-                  (f"{em('globe')} Сервер", f"<code>{esc(VPN_HOST)}</code>")]))
+                  (f"{em('globe')} Сервер", server_location_html())]))
     rows = [
         [btn("Мои устройства", "devs", icon="devices")],
         [btn("Добавить устройство", "add", style="primary", icon="add")],
@@ -734,6 +741,98 @@ def server_ip() -> str:
         return VPN_HOST
 
 
+# ================================================================== гео ===
+# Страна сервера по IP из локальной базы DB-IP Lite (.mmdb). База скачивается
+# при старте, если её нет или она старше месяца; обновляется раз в сутки в фоне.
+
+GEOIP_URL = "https://download.db-ip.com/free/dbip-country-lite-{}.mmdb.gz"
+GEO_REFRESH = 600              # как часто перепроверять IP сервера, сек
+_geo_reader = None
+_location = {"ip": VPN_HOST, "code": "", "country": "", "ts": 0.0}
+
+
+def geoip_update(force: bool = False) -> None:
+    """Скачать свежую базу DB-IP, если файла нет или он старше 30 дней."""
+    global _geo_reader
+    try:
+        if not force and time.time() - os.path.getmtime(GEOIP_DB) < 30 * 86400:
+            return
+    except OSError:
+        pass
+    today = date.today()
+    prev = date(today.year - (today.month == 1), (today.month - 2) % 12 + 1, 1)
+    for d in (today, prev):           # в начале месяца свежей базы может ещё не быть
+        url = GEOIP_URL.format(d.strftime("%Y-%m"))
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "amnezia-control-bot/1.0"})
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = gzip.decompress(resp.read())
+            tmp = GEOIP_DB + ".tmp"
+            with open(tmp, "wb") as f:
+                f.write(data)
+            os.replace(tmp, GEOIP_DB)
+            _geo_reader = None        # переоткрыть с новым файлом
+            log.info("GeoIP: база обновлена (%s)", url)
+            return
+        except Exception as e:
+            log.warning("GeoIP: не удалось скачать %s: %s", url, e)
+
+
+def geo_reader():
+    global _geo_reader
+    if _geo_reader is None and os.path.exists(GEOIP_DB):
+        try:
+            _geo_reader = maxminddb.open_database(GEOIP_DB)
+        except Exception as e:
+            log.warning("GeoIP: не удалось открыть базу: %s", e)
+    return _geo_reader
+
+
+def ip_country(ip: str) -> tuple[str, str]:
+    """(ISO-код, название по-русски) или ("", "")."""
+    try:
+        rec = (geo_reader() or {}).get(ip) or {}
+    except Exception:
+        return "", ""
+    c = rec.get("country") or {}
+    names = c.get("names") or {}
+    return c.get("iso_code", ""), names.get("ru") or names.get("en", "")
+
+
+def flag(code: str) -> str:
+    return "".join(chr(0x1F1E6 + ord(ch) - 65) for ch in code.upper()) if len(code) == 2 else ""
+
+
+def refresh_location() -> dict:
+    ip = server_ip()
+    code, country = ip_country(ip)
+    _location.update(ip=ip, code=code, country=country, ts=time.time())
+    return _location
+
+
+def server_location_html() -> str:
+    """«🇩🇪 Германия · 1.2.3.4» — из кэша (обновляется в фоне), без блокировок."""
+    loc = _location
+    ip = f"<code>{esc(loc['ip'])}</code>"
+    if not loc["country"]:
+        return ip
+    return f"{flag(loc['code'])} {esc(loc['country'])} · {ip}"
+
+
+async def geo_loop() -> None:
+    """Фон: IP сервера — каждые 10 минут, база стран — раз в сутки проверить возраст."""
+    last_db = 0.0
+    while True:
+        try:
+            if time.time() - last_db > 86400:
+                await asyncio.to_thread(geoip_update)
+                last_db = time.time()
+            await asyncio.to_thread(refresh_location)
+        except Exception as e:
+            log.warning("geo refresh failed: %s", e)
+        await asyncio.sleep(GEO_REFRESH)
+
+
 def device_card(d, viewer: int) -> tuple[str, InlineKeyboardMarkup]:
     st = peer_stats().get(d["pub"])
     created = (d["created"] or "")[:10]
@@ -745,7 +844,7 @@ def device_card(d, viewer: int) -> tuple[str, InlineKeyboardMarkup]:
     info = [("Статус", status)]
     if st and (st["rx"] or st["tx"]):
         info.append((f"{em('traffic')} Трафик", f"↓ {fmt_bytes(st['rx'])} · ↑ {fmt_bytes(st['tx'])}"))
-    info.append((f"{em('globe')} Сервер", f"<code>{esc(server_ip())}</code>"))
+    info.append((f"{em('globe')} Сервер", server_location_html()))
     if is_admin(viewer):
         info.append((f"{em('pin')} IP в VPN", f"<code>{d['ip']}</code>"))
     info.append((f"{em('calendar')} Создано", created))
@@ -1251,7 +1350,7 @@ def admin_menu() -> tuple[str, InlineKeyboardMarkup]:
         online = sum(1 for p in peers if is_online(stats.get(p["pub"])))
         srv = f"{em('online')} работает, порт {server_info()['port']}"
     except Exception as e:
-        app_n, online, srv = "?", "?", f"🔴 ошибка: {esc(str(e)[:100])}"
+        app_n, online, srv = "?", "?", f"{em('error')} ошибка: {esc(str(e)[:100])}"
     text = (f"<h2>{em('admin')} Админка</h2>"
             + kv([(f"{em('vpn')} Сервер", srv),
                   (f"{em('globe')} Адрес", f"<code>{esc(VPN_HOST)}</code>")])
@@ -1609,6 +1708,10 @@ async def main():
     from aiogram.types import BotCommand
     await bot.set_my_commands([BotCommand(command="start", description="Главное меню"),
                                BotCommand(command="help", description="Как подключиться")])
+    await asyncio.to_thread(geoip_update)
+    await asyncio.to_thread(refresh_location)
+    log.info("Сервер %s: %s", _location["ip"], _location["country"] or "страна неизвестна")
+    geo_task = asyncio.create_task(geo_loop())   # noqa: F841 (держим ссылку)
     await dp.start_polling(bot)
 
 
