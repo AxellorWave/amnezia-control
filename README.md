@@ -5,7 +5,7 @@ Telegram-бот для раздачи конфигов **AmneziaWG** с собс
 - Доступ по заявке: новый пользователь отправляет заявку, администратор одобряет её кнопкой.
 - У каждого пользователя может быть несколько устройств (ПК, ноутбук, телефон…) со своими конфигами.
 - Три формата конфига: ключ `vpn://` для AmneziaVPN / DefaultVPN, QR-код и файл `.conf`.
-- Пошаговые инструкции для Android (AmneziaVPN) и iPhone (DefaultVPN) с кнопками на магазины приложений.
+- Пошаговые инструкции для Android и Windows/macOS/Linux (AmneziaVPN) и iPhone (DefaultVPN) с кнопками на загрузку приложений.
 - Статус устройств (онлайн, трафик) таблицей прямо в чате, с кнопкой «Обновить».
 - Оформление на rich-сообщениях Telegram (заголовки, таблицы, раскрывающиеся блоки) и кастомных эмодзи.
 - Админ-панель: пользователи, заявки, отзыв доступа, конфиги, выпущенные в приложении AmneziaVPN, дашборд сервера.
@@ -256,7 +256,7 @@ docker compose up -d --build
   - 📄 файл `.conf`,
   - 🗑 удаление.
 - **➕ Добавить устройство** — бот спросит название (Телефон, Ноутбук…).
-- **📖 Как подключиться** — инструкции для Android и iPhone.
+- **📖 Как подключиться** — инструкции для Android, iPhone, Windows, macOS и Linux.
 - **📊 Статус** — таблица устройств с онлайном и трафиком, кнопка «Обновить».
 
 ### Администратор
@@ -280,7 +280,8 @@ docker compose up -d --build
 |-----------|-----------|--------|
 | Android   | AmneziaVPN | https://play.google.com/store/apps/details?id=org.amnezia.vpn |
 | iPhone (iOS 17+) | DefaultVPN | https://apps.apple.com/app/defaultvpn/id6744725017 |
-| iOS 15–16, старые Android/Windows | AmneziaWG | файл `.conf` или QR |
+| Windows / macOS / Linux | AmneziaVPN | https://github.com/amnezia-vpn/amnezia-client/releases/latest (или https://amnezia.org/ru/downloads) |
+| iOS 15–16, старые Android | AmneziaWG | файл `.conf` или QR |
 
 ## 12. Смена IP сервера
 

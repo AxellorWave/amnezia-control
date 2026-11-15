@@ -55,6 +55,8 @@ DB_PATH = os.getenv("DB_PATH", "bot.db")
 
 ANDROID_URL = "https://play.google.com/store/apps/details?id=org.amnezia.vpn"
 IOS_URL = "https://apps.apple.com/app/defaultvpn/id6744725017"
+DESKTOP_URL = "https://github.com/amnezia-vpn/amnezia-client/releases/latest"
+DESKTOP_SITE_URL = "https://amnezia.org/ru/downloads"
 
 SERVER_CONF = f"{CONF_DIR}/{IFACE}.conf"
 # параметры [Interface] сервера, которые НЕ переносятся в конфиг клиента
@@ -474,14 +476,15 @@ EMOJI = {   # имя: (обычный эмодзи, id кастомного)
     "clock": ("⏰", "5983150113483134607"),      "question": ("❓", "6030848053177486888"),
     "sad": ("☹️", "6042029429301973188"),       "idea": ("💡", "5891120964468480450"),
     "bell": ("🔔", "6039486778597970865"),      "link": ("🔗", "6028171274939797252"),
+    "windows": ("🪟", None),                    "linux": ("🐧", None),   # без кастомного id
 }
-EMOJI_BY_ID = {cid: plain for plain, cid in EMOJI.values()}
+EMOJI_BY_ID = {cid: plain for plain, cid in EMOJI.values() if cid}
 
 
 def em(name: str) -> str:
     """Эмодзи для текста сообщения: кастомный (tg-emoji) или обычный."""
     plain, cid = EMOJI[name]
-    return f'<tg-emoji emoji-id="{cid}">{plain}</tg-emoji>' if CUSTOM_EMOJI else plain
+    return f'<tg-emoji emoji-id="{cid}">{plain}</tg-emoji>' if CUSTOM_EMOJI and cid else plain
 
 
 def btn(text: str, data: str | None = None, url: str | None = None, style: str | None = None,
@@ -490,7 +493,7 @@ def btn(text: str, data: str | None = None, url: str | None = None, style: str |
     kw = {"text": text}
     if icon:
         plain, cid = EMOJI[icon]
-        if CUSTOM_EMOJI:
+        if CUSTOM_EMOJI and cid:
             kw["icon_custom_emoji_id"] = cid
         else:
             kw["text"] = f"{plain} {text}"
@@ -745,10 +748,15 @@ def help_menu() -> tuple[str, InlineKeyboardMarkup]:
             f"<p>Выбери, что у тебя за устройство — покажу пошаговую инструкцию.</p>"
             + table([[f"{em('android')} Android", "AmneziaVPN"],
                      [f"{em('apple')} iPhone (iOS 17+)", "DefaultVPN"],
-                     ["iOS 15–16, Windows, старые Android", "AmneziaWG + файл .conf"]],
+                     [f"{em('windows')} Windows · {em('apple')} macOS · {em('linux')} Linux",
+                      "AmneziaVPN"],
+                     ["iOS 15–16, старые Android", "AmneziaWG + файл .conf"]],
                     head=["Устройство", "Приложение"]))
     return text, kb([btn("Android", "guide:android", icon="android"),
                      btn("iPhone", "guide:ios", icon="apple")],
+                    [btn("Windows", "guide:windows", icon="windows"),
+                     btn("macOS", "guide:mac", icon="apple"),
+                     btn("Linux", "guide:linux", icon="linux")],
                     [btn("Меню", "menu", icon="back")])
 
 
@@ -808,6 +816,75 @@ def guide_ios() -> str:
 <ul>
 <li>Если App Store у тебя не российский — можно поставить и сам <b>AmneziaVPN</b>, шаги те же.</li>
 <li>iOS 15–16: используй приложение <b>AmneziaWG</b> и <b>файл .conf</b> из бота.</li>
+<li>Не подключается — напиши администратору, он проверит сервер.</li>
+</ul>
+</details>
+
+<footer>{em('lock')} Ключ — как пароль: не пересылай его другим людям.</footer>
+"""
+
+
+DESKTOP = {   # os: (заголовок, иконка, шаги установки, запасной вариант)
+    "windows": (
+        "Windows", "windows",
+        "<ol>\n<li>Нажми <b>«Скачать»</b> под сообщением и скачай установщик для Windows "
+        "(файл <code>.exe</code>).</li>\n"
+        "<li>Запусти его и пройди установку. Если появится окно SmartScreen — "
+        "<b>«Подробнее» → «Выполнить в любом случае»</b>.</li>\n"
+        "<li>Разреши установку драйвера VPN, если Windows спросит.</li>\n</ol>",
+        "<li>Можно поставить <b>AmneziaWG для Windows</b> (GitHub amnezia-vpn, репозиторий "
+        "<code>amneziawg-windows-client</code>) и импортировать <b>файл .conf</b> из бота: "
+        "<b>«Импорт туннелей из файла»</b> → <b>«Подключить»</b>.</li>",
+    ),
+    "mac": (
+        "macOS", "apple",
+        "<ol>\n<li>Нажми <b>«Скачать»</b> под сообщением и скачай установщик для macOS.</li>\n"
+        "<li>Открой его и установи AmneziaVPN (перетащи в «Программы» или пройди "
+        "мастер установки).</li>\n"
+        "<li>Если macOS не даёт открыть приложение — <b>Системные настройки → "
+        "Конфиденциальность и безопасность → «Всё равно открыть»</b>.</li>\n</ol>",
+        "<li>Можно поставить <b>AmneziaWG</b> из Mac App Store и импортировать "
+        "<b>файл .conf</b> из бота.</li>",
+    ),
+    "linux": (
+        "Linux", "linux",
+        "<ol>\n<li>Нажми <b>«Скачать»</b> под сообщением и скачай архив для Linux.</li>\n"
+        "<li>Распакуй его и запусти установщик из архива в терминале (команды ниже).</li>\n"
+        "<li>После установки AmneziaVPN появится в меню приложений.</li>\n</ol>\n"
+        "<pre>chmod +x AmneziaVPN_*\nsudo ./AmneziaVPN_*</pre>",
+        "<li>Без графического приложения: установи <code>amneziawg-tools</code> "
+        "(и модуль <code>amneziawg</code>), положи <b>файл .conf</b> из бота в "
+        "<code>/etc/amnezia/amneziawg/</code> и выполни "
+        "<code>sudo awg-quick up &lt;имя&gt;</code>.</li>",
+    ),
+}
+
+
+def guide_desktop(os_name: str) -> str:
+    title, icon, install, fallback = DESKTOP[os_name]
+    return f"""
+<h2>{em(icon)} {title} — AmneziaVPN</h2>
+<p>Официальное приложение Amnezia для компьютера. Подключение займёт пару минут.</p>
+
+<h3>1. Установи приложение</h3>
+{install}
+
+<h3>2. Скопируй ключ</h3>
+<p>В боте: <b>Мои устройства → твоё устройство → Ключ для приложения</b>. Нажми на ключ — он скопируется целиком. Удобнее всего открыть бота прямо на компьютере (Telegram Desktop или web.telegram.org).</p>
+
+<h3>3. Добавь подключение</h3>
+<ol>
+<li>Открой AmneziaVPN и нажми <b>«Приступим»</b> (или ➕, если подключения уже есть).</li>
+<li>Нажми <b>«Вставить»</b> рядом с полем для ключа.</li>
+<li>Нажми <b>«Продолжить»</b>, затем <b>«Подключиться»</b>.</li>
+</ol>
+
+<details>
+<summary>{em('question')} Не получается?</summary>
+<ul>
+<li>GitHub не открывается — скачай приложение с сайта Amnezia (кнопка <b>«Сайт Amnezia»</b>).</li>
+<li>Вместо ключа можно импортировать <b>файл .conf</b> из бота: в AmneziaVPN ➕ → <b>«Файл с настройками»</b>.</li>
+{fallback}
 <li>Не подключается — напиши администратору, он проверит сервер.</li>
 </ul>
 </details>
@@ -1034,7 +1111,8 @@ async def send_config(cb: CallbackQuery, bot: Bot):
         await send_view(bot, chat_id,
                         f"<h3>{em('key')} Ключ для «{name}»</h3>"
                         f"<p>Нажми на ключ — он скопируется. Затем вставь его в <b>AmneziaVPN</b> "
-                        f"(Android) или <b>DefaultVPN</b> (iPhone).</p><pre>{key}</pre>"
+                        f"(Android, Windows, macOS, Linux) или <b>DefaultVPN</b> (iPhone).</p>"
+                        f"<pre>{key}</pre>"
                         f"<footer>{em('lock')} Ключ — как пароль: не пересылай его другим людям.</footer>",
                         back)
     elif fmt == "qr":
@@ -1110,11 +1188,16 @@ async def cmd_help(m: Message):
 @dp.callback_query(F.data.startswith("guide:"))
 async def cb_guide(cb: CallbackQuery):
     await cb.answer()
-    if cb.data.endswith("android"):
-        guide, store = guide_android(), btn("Google Play", url=ANDROID_URL, icon="download")
+    os_name = cb.data.split(":", 1)[1]
+    if os_name == "android":
+        guide, store = guide_android(), [btn("Google Play", url=ANDROID_URL, icon="download")]
+    elif os_name in DESKTOP:
+        guide = guide_desktop(os_name)
+        store = [btn("Скачать", url=DESKTOP_URL, icon="download"),
+                 btn("Сайт Amnezia", url=DESKTOP_SITE_URL, icon="globe")]
     else:
-        guide, store = guide_ios(), btn("App Store", url=IOS_URL, icon="download")
-    await show(cb, guide, kb([store], [btn("Мои устройства", "devs", icon="devices"),
+        guide, store = guide_ios(), [btn("App Store", url=IOS_URL, icon="download")]
+    await show(cb, guide, kb(store, [btn("Мои устройства", "devs", icon="devices"),
                                        btn("Назад", "help", icon="back")]))
 
 
