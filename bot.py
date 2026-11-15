@@ -682,10 +682,8 @@ def user_table(u) -> str:
                ("🆔 ID", f"<code>{uid}</code>")])
 
 
-def dot(st, plain: bool = False) -> str:
-    """Индикатор активности; plain=True — для текста кнопок (там нельзя tg-emoji)."""
-    name = "online" if is_online(st) else "offline"
-    return EMOJI[name][0] if plain else em(name)
+def dot(st) -> str:
+    return em("online" if is_online(st) else "offline")
 
 
 def main_menu(uid: int) -> tuple[str, InlineKeyboardMarkup]:
@@ -714,7 +712,8 @@ def devices_menu(uid: int) -> tuple[str, InlineKeyboardMarkup]:
     stats = peer_stats() if devs else {}
     rows = []
     for d in devs:
-        rows.append([btn(f"{dot(stats.get(d['pub']), plain=True)} {d['name']}", f"dev:{d['id']}")])
+        rows.append([btn(d["name"], f"dev:{d['id']}",
+                         icon="online" if is_online(stats.get(d["pub"])) else "offline")])
     rows.append([btn("Добавить устройство", "add", style="primary", icon="add")])
     rows.append([btn("Меню", "menu", icon="back")])
     text = f"<h2>{em('devices')} Мои устройства</h2>"
