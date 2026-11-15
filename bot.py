@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+import socket
 import sqlite3
 import struct
 import subprocess
@@ -717,7 +718,20 @@ def devices_menu(uid: int) -> tuple[str, InlineKeyboardMarkup]:
     return text, kb(*rows)
 
 
-def device_card(d) -> tuple[str, InlineKeyboardMarkup]:
+def server_ip() -> str:
+    """Текущий публичный IP сервера: VPN_HOST, а если это домен — его A-запись."""
+    try:
+        ipaddress.ip_address(VPN_HOST)
+        return VPN_HOST
+    except ValueError:
+        pass
+    try:
+        return socket.gethostbyname(VPN_HOST)
+    except OSError:
+        return VPN_HOST
+
+
+def device_card(d, viewer: int) -> tuple[str, InlineKeyboardMarkup]:
     st = peer_stats().get(d["pub"])
     created = (d["created"] or "")[:10]
     try:
@@ -728,8 +742,10 @@ def device_card(d) -> tuple[str, InlineKeyboardMarkup]:
     info = [("Статус", status)]
     if st and (st["rx"] or st["tx"]):
         info.append((f"{em('traffic')} Трафик", f"↓ {fmt_bytes(st['rx'])} · ↑ {fmt_bytes(st['tx'])}"))
-    info += [(f"{em('pin')} IP в VPN", f"<code>{d['ip']}</code>"),
-             (f"{em('calendar')} Создано", created)]
+    info.append((f"{em('globe')} Сервер", f"<code>{esc(server_ip())}</code>"))
+    if is_admin(viewer):
+        info.append((f"{em('pin')} IP в VPN", f"<code>{d['ip']}</code>"))
+    info.append((f"{em('calendar')} Создано", created))
     text = (f"<h2>{em('device')} {esc(d['name'])}</h2>" + kv(info) +
             f"<p>Выбери формат конфига 👇</p>"
             f"<blockquote>{em('key')} <b>Ключ</b> — самый простой способ для AmneziaVPN "
@@ -1071,7 +1087,7 @@ async def create_device(m: Message, bot: Bot, state: FSMContext):
         await bot.delete_message(m.chat.id, wait.message_id)
     except Exception:
         pass
-    text, markup = await asyncio.to_thread(device_card, get_device(cur.lastrowid))
+    text, markup = await asyncio.to_thread(device_card, get_device(cur.lastrowid), uid)
     await send_view(bot, m.chat.id, f"<p>{em('party')} <b>Готово!</b> Устройство создано.</p>" + text,
                     markup)
     if not is_admin(uid):
@@ -1087,7 +1103,7 @@ async def cb_device(cb: CallbackQuery):
     d = own_device(cb.from_user.id, int(cb.data.split(":")[1]))
     if not d or not has_access(cb.from_user.id):
         return await cb.answer("Устройство не найдено", show_alert=True)
-    text, markup = await asyncio.to_thread(device_card, d)
+    text, markup = await asyncio.to_thread(device_card, d, cb.from_user.id)
     await show(cb, text, markup)
     await cb.answer()
 
