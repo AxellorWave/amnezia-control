@@ -20,6 +20,7 @@ import socket
 import sqlite3
 import struct
 import subprocess
+import threading
 import time
 import urllib.request
 import zlib
@@ -348,6 +349,15 @@ def init_db():
     # личный лимит устройств (NULL = общий MAX_DEVICES)
     if "max_devices" not in [r[1] for r in db.execute("PRAGMA table_info(users)")]:
         db.execute("ALTER TABLE users ADD COLUMN max_devices INTEGER")
+    # учёт трафика: *_total — накоплено, *_last — последнее показание счётчика awg
+    # (счётчики awg сбрасываются при перезапуске сервера, поэтому копим дельты);
+    # у пользователя — трафик уже удалённых устройств
+    for table_, cols_ in (("devices", ("rx_total", "tx_total", "rx_last", "tx_last")),
+                          ("users", ("rx_deleted", "tx_deleted"))):
+        have = [r[1] for r in db.execute(f"PRAGMA table_info({table_})")]
+        for c in cols_:
+            if c not in have:
+                db.execute(f"ALTER TABLE {table_} ADD COLUMN {c} INTEGER NOT NULL DEFAULT 0")
     db.commit()
 
 
@@ -376,6 +386,53 @@ def user_devices(chat_id: int):
 
 def get_device(dev_id: int):
     return db.execute("SELECT * FROM devices WHERE id=?", (dev_id,)).fetchone()
+
+
+# =============================================================== трафик ===
+
+traffic_lock = threading.Lock()
+TRAFFIC_EVERY = 60             # как часто снимать счётчики, сек
+
+
+def account_traffic(stats: dict | None = None) -> None:
+    """Добавить к накопленному трафику устройств прирост счётчиков awg."""
+    stats = peer_stats() if stats is None else stats
+    if not stats:
+        return
+    with traffic_lock:
+        for d in db.execute("SELECT id, pub, rx_last, tx_last FROM devices").fetchall():
+            st = stats.get(d["pub"])
+            if not st or (st["rx"] == d["rx_last"] and st["tx"] == d["tx_last"]):
+                continue
+            # счётчик меньше прошлого — awg перезапускался, считаем с нуля
+            drx = st["rx"] - d["rx_last"] if st["rx"] >= d["rx_last"] else st["rx"]
+            dtx = st["tx"] - d["tx_last"] if st["tx"] >= d["tx_last"] else st["tx"]
+            db.execute("UPDATE devices SET rx_total=rx_total+?, tx_total=tx_total+?, "
+                       "rx_last=?, tx_last=? WHERE id=?",
+                       (drx, dtx, st["rx"], st["tx"], d["id"]))
+        db.commit()
+
+
+def user_traffic(chat_id: int) -> tuple[int, int]:
+    """Весь трафик человека (↓, ↑), включая удалённые устройства."""
+    dev = db.execute("SELECT COALESCE(SUM(rx_total), 0), COALESCE(SUM(tx_total), 0) "
+                     "FROM devices WHERE chat_id=?", (chat_id,)).fetchone()
+    old = db.execute("SELECT rx_deleted, tx_deleted FROM users WHERE chat_id=?",
+                     (chat_id,)).fetchone()
+    return dev[0] + (old[0] if old else 0), dev[1] + (old[1] if old else 0)
+
+
+def fmt_traffic(rx: int, tx: int) -> str:
+    return f"<b>{fmt_bytes(rx + tx)}</b> (↓ {fmt_bytes(rx)} · ↑ {fmt_bytes(tx)})"
+
+
+async def traffic_loop() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(account_traffic)
+        except Exception as e:
+            log.warning("traffic accounting failed: %s", e)
+        await asyncio.sleep(TRAFFIC_EVERY)
 
 
 def bot_pubs() -> set[str]:
@@ -471,7 +528,7 @@ EMOJI = {   # имя: (обычный эмодзи, id кастомного)
     "key": ("🔑", "5776078972659962594"),       "qr": ("📷", "5766975922620076409"),
     "file": ("📄", "6050643982646513651"),      "trash": ("🗑", "6039522349517115015"),
     "android": ("🤖", "6030400221232501136"),   "apple": ("🍏", "5775870512127283512"),
-    "download": ("⬇️", "6039802767931871481"),  "ok": ("✅", "5774022692642492953"),
+    "download": ("⬇️", "6039802767931871481"),  "ok": ("✅", "5188216731453103384"),
     "no": ("❌", "5774077015388852135"),        "edit": ("✏️", "6039779802741739617"),
     "refresh": ("🔁", "6030657343744644592"),   "send": ("⬆️", "6039391666547201160"),
     "hello": ("👋", "6041921818896372382"),     "party": ("🎉", "6041731551845159060"),
@@ -486,6 +543,7 @@ EMOJI = {   # имя: (обычный эмодзи, id кастомного)
     "windows": ("🪟", "5366318141771096216"),   "linux": ("🐧", "5208428250547633632"),
     "online": ("🟢", "5330533835765462529"),    "offline": ("⚪️", "5330203192003146212"),
     "error": ("🔴", "5974083768233760323"),
+    "id": ("🆔", "5332465669105529951"),        "phone": ("📱", "5870748341150683538"),
 }
 EMOJI_BY_ID = {cid: plain for plain, cid in EMOJI.values() if cid}
 
@@ -679,7 +737,7 @@ def user_table(u) -> str:
              if u["username"] else "<i>нет</i>")
     return kv([(f"{em('user')} Имя", f'<a href="tg://user?id={uid}">{esc(u["name"] or "без имени")}</a>'),
                (f"{em('link')} Username", uname),
-               ("🆔 ID", f"<code>{uid}</code>")])
+               (f"{em('id')} ID", f"<code>{uid}</code>")])
 
 
 def dot(st) -> str:
@@ -696,6 +754,7 @@ def main_menu(uid: int) -> tuple[str, InlineKeyboardMarkup]:
             f"<p>Это твой личный VPN. Здесь можно выпустить конфиг для каждого устройства "
             f"и посмотреть, как подключиться.</p>"
             + kv([(f"{em('devices')} Устройств", f"<b>{n}{limit}</b>"),
+                  (f"{em('traffic')} Трафик", fmt_traffic(*user_traffic(uid))),
                   (f"{em('globe')} Сервер", server_location_html())]))
     rows = [
         [btn("Мои устройства", "devs", icon="devices")],
@@ -833,7 +892,10 @@ async def geo_loop() -> None:
 
 
 def device_card(d, viewer: int) -> tuple[str, InlineKeyboardMarkup]:
-    st = peer_stats().get(d["pub"])
+    stats = peer_stats()
+    account_traffic(stats)
+    d = get_device(d["id"]) or d
+    st = stats.get(d["pub"])
     created = (d["created"] or "")[:10]
     try:
         created = datetime.fromisoformat(d["created"]).strftime("%d.%m.%Y")
@@ -841,8 +903,8 @@ def device_card(d, viewer: int) -> tuple[str, InlineKeyboardMarkup]:
         pass
     status = f"{dot(st)} в сети" if is_online(st) else f"{dot(st)} {fmt_seen(st['hs'] if st else 0)}"
     info = [("Статус", status)]
-    if st and (st["rx"] or st["tx"]):
-        info.append((f"{em('traffic')} Трафик", f"↓ {fmt_bytes(st['rx'])} · ↑ {fmt_bytes(st['tx'])}"))
+    if d["rx_total"] or d["tx_total"]:
+        info.append((f"{em('traffic')} Трафик", fmt_traffic(d["rx_total"], d["tx_total"])))
     info.append((f"{em('globe')} Сервер", server_location_html()))
     if is_admin(viewer):
         info.append((f"{em('pin')} IP в VPN", f"<code>{d['ip']}</code>"))
@@ -1019,6 +1081,10 @@ STATUS_ROWS_MAX = 100
 
 def status_view(kind: str, uid: int) -> tuple[str, InlineKeyboardMarkup]:
     stats = peer_stats()
+    account_traffic(stats)
+    # для устройств бота — накопленный трафик, для клиентов из приложения — счётчик awg
+    totals = {d["pub"]: (d["rx_total"], d["tx_total"])
+              for d in db.execute("SELECT pub, rx_total, tx_total FROM devices")}
     rows = []
     if kind == "a":                       # админ: все клиенты сервера
         users = {d["pub"]: d for d in db.execute(
@@ -1039,7 +1105,9 @@ def status_view(kind: str, uid: int) -> tuple[str, InlineKeyboardMarkup]:
 
     items = []
     for name, pub in rows:
-        st = stats.get(pub, {"hs": 0, "rx": 0, "tx": 0})
+        st = dict(stats.get(pub, {"hs": 0, "rx": 0, "tx": 0}))
+        if pub in totals:
+            st["rx"], st["tx"] = totals[pub]
         items.append((is_online(st), st["hs"], name, st))
     items.sort(key=lambda x: (-x[0], -x[1]))
     online = sum(1 for x in items if x[0])
@@ -1267,11 +1335,22 @@ async def ask_delete(cb: CallbackQuery):
     await cb.answer()
 
 
+def _drop_device(dev_id: int) -> None:
+    """Удалить устройство из БД, перенеся его трафик на пользователя."""
+    account_traffic()
+    with traffic_lock:
+        d = get_device(dev_id)
+        if d:
+            db.execute("UPDATE users SET rx_deleted=rx_deleted+?, tx_deleted=tx_deleted+? "
+                       "WHERE chat_id=?", (d["rx_total"], d["tx_total"], d["chat_id"]))
+        db.execute("DELETE FROM devices WHERE id=?", (dev_id,))
+        db.commit()
+
+
 async def delete_device(d) -> None:
+    await asyncio.to_thread(_drop_device, d["id"])   # сначала снять трафик, пока пир жив
     async with wg_lock:
         await asyncio.to_thread(remove_peer, d["pub"])
-    db.execute("DELETE FROM devices WHERE id=?", (d["id"],))
-    db.commit()
 
 
 @dp.callback_query(F.data.startswith("delok:"))
@@ -1328,7 +1407,6 @@ async def cb_status(cb: CallbackQuery):
 
 # ================================================================ админ ===
 
-STATUS_ICON = {"approved": "✅", "pending": "⏳", "denied": "❌", "revoked": "🚫"}
 STATUS_EMOJI = {"approved": "ok", "pending": "pending", "denied": "no", "revoked": "denied"}
 STATUS_NAME = {"approved": "доступ есть", "pending": "заявка", "denied": "отклонён",
                "revoked": "доступ отозван"}
@@ -1382,7 +1460,9 @@ def users_list(flt: str = "") -> tuple[str, InlineKeyboardMarkup]:
         who = f"@{u['username']}" if u["username"] else str(u["chat_id"])
         rows.append([btn(f"{u['name'] or 'без имени'} · {who} · 📱{n}", f"u:{u['chat_id']}",
                          icon=STATUS_EMOJI.get(u["status"]))])
-        lines.append([STATUS_ICON.get(u["status"], "?"), user_line(u), str(n)])
+        rx, tx = user_traffic(u["chat_id"])
+        lines.append([em(STATUS_EMOJI.get(u["status"], "question")), user_line(u), str(n),
+                      fmt_bytes(rx + tx)])
     rows.append([btn("Админка", "adm", icon="back")])
     title = {"pending": f"{em('pending')} Заявки",
              "denied": f"{em('denied')} Отклонённые и отозванные"}.get(flt, f"{em('users')} Пользователи")
@@ -1390,7 +1470,7 @@ def users_list(flt: str = "") -> tuple[str, InlineKeyboardMarkup]:
     if not users:
         text += "<p>Пусто.</p>"
     else:
-        text += table(lines, head=["", "Человек", "📱"])
+        text += table(lines, head=["", "Человек", em("phone"), em("traffic")])
         if len(users) > USERS_LIST_MAX:
             text += f"<p><i>Показаны первые {USERS_LIST_MAX} из {len(users)}.</i></p>"
         text += "<p>Нажми на человека, чтобы открыть карточку.</p>"
@@ -1402,8 +1482,9 @@ def user_card(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
     if not u:
         return (f"<p>{em('warn')} Пользователь не найден.</p>",
                 kb([btn("Пользователи", "adm:users", icon="back")]))
+    stats = peer_stats()
+    account_traffic(stats)
     devs = user_devices(chat_id)
-    stats = peer_stats() if devs else {}
     if is_admin(chat_id):
         limit = "без ограничений (админ)"
     elif u["max_devices"] is None:
@@ -1413,14 +1494,16 @@ def user_card(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
     s = u["status"]
     text = (f"<h2>{em(STATUS_EMOJI.get(s, 'user'))} {esc(u['name'] or 'без имени')}</h2>"
             + user_table(u)
-            + kv([("Статус", f"{STATUS_ICON.get(s, '?')} {STATUS_NAME.get(s, esc(s))}"),
+            + kv([("Статус", f"{em(STATUS_EMOJI.get(s, 'question'))} {STATUS_NAME.get(s, esc(s))}"),
                   (f"{em('calendar')} С нами с", (u["created"] or "")[:10]),
-                  (f"{em('devices')} Лимит устройств", limit)]))
+                  (f"{em('devices')} Лимит устройств", limit),
+                  (f"{em('traffic')} Трафик всего", fmt_traffic(*user_traffic(chat_id)))]))
     rows = []
     if devs:
         text += table([[dot(stats.get(d["pub"])), esc(d["name"]), f"<code>{d['ip']}</code>",
-                        fmt_seen(stats[d["pub"]]["hs"] if d["pub"] in stats else 0)] for d in devs],
-                      head=["", "Устройство", "IP", "Подключение"],
+                        fmt_seen(stats[d["pub"]]["hs"] if d["pub"] in stats else 0),
+                        fmt_bytes(d["rx_total"] + d["tx_total"])] for d in devs],
+                      head=["", "Устройство", "IP", "Подключение", "Трафик"],
                       caption=f"Устройства ({len(devs)})")
         for d in devs:
             rows.append([btn(d["name"], f"del:{d['id']}", icon="trash")])
@@ -1710,7 +1793,8 @@ async def main():
     await asyncio.to_thread(geoip_update)
     await asyncio.to_thread(refresh_location)
     log.info("Сервер %s: %s", _location["ip"], _location["country"] or "страна неизвестна")
-    geo_task = asyncio.create_task(geo_loop())   # noqa: F841 (держим ссылку)
+    bg_tasks = [asyncio.create_task(geo_loop()),     # noqa: F841 (держим ссылки)
+                asyncio.create_task(traffic_loop())]
     await dp.start_polling(bot)
 
 
