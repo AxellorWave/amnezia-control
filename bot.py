@@ -477,7 +477,8 @@ EMOJI = {   # имя: (обычный эмодзи, id кастомного)
     "clock": ("⏰", "5983150113483134607"),      "question": ("❓", "6030848053177486888"),
     "sad": ("☹️", "6042029429301973188"),       "idea": ("💡", "5891120964468480450"),
     "bell": ("🔔", "6039486778597970865"),      "link": ("🔗", "6028171274939797252"),
-    "windows": ("🪟", None),                    "linux": ("🐧", None),   # без кастомного id
+    "windows": ("🪟", "5366318141771096216"),   "linux": ("🐧", "5208428250547633632"),
+    "online": ("🟢", "5330533835765462529"),    "offline": ("⚪️", "5330203192003146212"),
 }
 EMOJI_BY_ID = {cid: plain for plain, cid in EMOJI.values() if cid}
 
@@ -674,8 +675,10 @@ def user_table(u) -> str:
                ("🆔 ID", f"<code>{uid}</code>")])
 
 
-def dot(st) -> str:
-    return "🟢" if is_online(st) else "⚪️"
+def dot(st, plain: bool = False) -> str:
+    """Индикатор активности; plain=True — для текста кнопок (там нельзя tg-emoji)."""
+    name = "online" if is_online(st) else "offline"
+    return EMOJI[name][0] if plain else em(name)
 
 
 def main_menu(uid: int) -> tuple[str, InlineKeyboardMarkup]:
@@ -704,7 +707,7 @@ def devices_menu(uid: int) -> tuple[str, InlineKeyboardMarkup]:
     stats = peer_stats() if devs else {}
     rows = []
     for d in devs:
-        rows.append([btn(f"{dot(stats.get(d['pub']))} {d['name']}", f"dev:{d['id']}")])
+        rows.append([btn(f"{dot(stats.get(d['pub']), plain=True)} {d['name']}", f"dev:{d['id']}")])
     rows.append([btn("Добавить устройство", "add", style="primary", icon="add")])
     rows.append([btn("Меню", "menu", icon="back")])
     text = f"<h2>{em('devices')} Мои устройства</h2>"
@@ -712,7 +715,7 @@ def devices_menu(uid: int) -> tuple[str, InlineKeyboardMarkup]:
         text += table([[dot(stats.get(d["pub"])), f"<b>{esc(d['name'])}</b>",
                         fmt_seen(stats[d["pub"]]["hs"] if d["pub"] in stats else 0)] for d in devs],
                       head=["", "Устройство", "Подключение"])
-        text += "<p>Выбери устройство, чтобы получить его конфиг. 🟢 — сейчас подключено.</p>"
+        text += "<p>Выбери устройство, чтобы получить его конфиг. " + em("online") + " — сейчас подключено.</p>"
     else:
         text += ("<p>Пока пусто. Добавь первое устройство — например, «Телефон» или «Ноутбук».</p>")
     return text, kb(*rows)
@@ -738,7 +741,7 @@ def device_card(d, viewer: int) -> tuple[str, InlineKeyboardMarkup]:
         created = datetime.fromisoformat(d["created"]).strftime("%d.%m.%Y")
     except Exception:
         pass
-    status = "🟢 в сети" if is_online(st) else f"⚪️ {fmt_seen(st['hs'] if st else 0)}"
+    status = f"{dot(st)} в сети" if is_online(st) else f"{dot(st)} {fmt_seen(st['hs'] if st else 0)}"
     info = [("Статус", status)]
     if st and (st["rx"] or st["tx"]):
         info.append((f"{em('traffic')} Трафик", f"↓ {fmt_bytes(st['rx'])} · ↑ {fmt_bytes(st['tx'])}"))
@@ -943,7 +946,7 @@ def status_view(kind: str, uid: int) -> tuple[str, InlineKeyboardMarkup]:
     items.sort(key=lambda x: (-x[0], -x[1]))
     online = sum(1 for x in items if x[0])
     total = sum(x[3]["rx"] + x[3]["tx"] for x in items)
-    summary = [["🟢 в сети", f"<b>{online}</b>"], [f"{em('devices')} устройств", f"<b>{len(items)}</b>"]]
+    summary = [[f"{em('online')} в сети", f"<b>{online}</b>"], [f"{em('devices')} устройств", f"<b>{len(items)}</b>"]]
     if kind == "a":
         people = db.execute("SELECT COUNT(*) FROM users WHERE status='approved'").fetchone()[0]
         summary.append([f"{em('users')} людей", f"<b>{people}</b>"])
@@ -951,7 +954,7 @@ def status_view(kind: str, uid: int) -> tuple[str, InlineKeyboardMarkup]:
 
     text = f"<h2>{title}</h2>" + kv(summary)
     if items:
-        text += table([[("🟢" if on else "⚪️"), name, fmt_seen(hs),
+        text += table([[em("online" if on else "offline"), name, fmt_seen(hs),
                         f"↓ {fmt_bytes(st['rx'])}<br>↑ {fmt_bytes(st['tx'])}"]
                        for on, hs, name, st in items[:STATUS_ROWS_MAX]],
                       head=["", "Устройство", "Подключение", "Трафик"])
@@ -1246,7 +1249,7 @@ def admin_menu() -> tuple[str, InlineKeyboardMarkup]:
         mine = bot_pubs()
         app_n = sum(1 for p in peers if p["pub"] not in mine)
         online = sum(1 for p in peers if is_online(stats.get(p["pub"])))
-        srv = f"🟢 работает, порт {server_info()['port']}"
+        srv = f"{em('online')} работает, порт {server_info()['port']}"
     except Exception as e:
         app_n, online, srv = "?", "?", f"🔴 ошибка: {esc(str(e)[:100])}"
     text = (f"<h2>{em('admin')} Админка</h2>"
@@ -1257,7 +1260,7 @@ def admin_menu() -> tuple[str, InlineKeyboardMarkup]:
                      [f"{em('denied')} Отклонённых", f"<b>{denied}</b>"],
                      [f"{em('devices')} Устройств через бота", f"<b>{devices}</b>"],
                      [f"{em('app')} Из приложения", f"<b>{app_n}</b>"],
-                     ["🟢 Сейчас в сети", f"<b>{online}</b>"]]))
+                     [f"{em('online')} Сейчас в сети", f"<b>{online}</b>"]]))
     rows = [[btn("Пользователи", "adm:users", icon="users"),
              btn(f"Заявки ({pending})", "adm:pending", icon="pending")],
             [btn("Из приложения", "adm:app", icon="app"), btn("Дашборд", "adm:dash", icon="status")],
