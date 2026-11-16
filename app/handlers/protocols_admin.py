@@ -133,6 +133,11 @@ def protocol_card(pid: str) -> tuple[str, InlineKeyboardMarkup]:
         rows.append([btn("Резервная копия", f"bk:{pid}", icon="backup")])
     if pid == "xray" and e:
         rows.append([btn("Обновить Xray", "pxu", icon="download")])
+    if e and pid == "xray":
+        sni = (XRAY.settings() or {}).get("sni")
+        if sni:
+            text += kv([("Цель REALITY", f"<code>{esc(sni)}</code>")])
+            rows.append([btn("Сменить цель REALITY", "pxt", icon="edit")])
     if e and pid in ("xray", "hy2"):
         on = bool((PROTO_OBJ[pid].settings() or {}).get("block_ru"))
         text += kv([("Блок RU", "включён — российские сайты через этот протокол не открываются; "
@@ -189,7 +194,9 @@ async def cb_protocols(cb: CallbackQuery):
 
 @router.callback_query(F.data.startswith("proto:card:"))
 @admin_only
-async def cb_protocol_card(cb: CallbackQuery):
+async def cb_protocol_card(cb: CallbackQuery, state: FSMContext):
+    if await state.get_state() == XrayTarget.domain.state:
+        await state.clear()          # «Отмена» при смене цели REALITY
     await show(cb, *(await asyncio.to_thread(protocol_card, cb.data.split(":")[2])))
     await cb.answer()
 
@@ -577,6 +584,63 @@ async def cb_block_ru(cb: CallbackQuery):
         return await cb.answer(f"Не получилось: {e}"[:190], show_alert=True)
     await asyncio.to_thread(detect.refresh)
     await show(cb, *protocol_card(pid))
+
+
+class XrayTarget(StatesGroup):
+    domain = State()
+
+
+TARGET_HINT = ("<p>Цель REALITY — чужой сайт, под который маскируется сервер. Требования:</p>"
+               "<ul><li>TLS 1.3 и HTTP/2 (бот проверит сам);</li>"
+               "<li><b>зарубежный</b> сайт: российский сайт на зарубежном IP выглядит "
+               "подозрительно;</li>"
+               "<li>лучше сайт в той же стране или сети, что и твой VPS, и не гигант вроде "
+               "google.com или microsoft.com.</li></ul>"
+               "<p>Пришли домен, например <code>www.example.com</code>.</p>")
+
+
+@router.callback_query(F.data == "pxt")
+@admin_only
+async def cb_xray_target(cb: CallbackQuery, state: FSMContext):
+    if not XRAY.settings():
+        return await cb.answer("VLESS не установлен", show_alert=True)
+    await state.set_state(XrayTarget.domain)
+    cur = XRAY.settings().get("sni", "")
+    await show(cb, f"<h3>{em('edit')} Цель REALITY</h3>"
+                   f"<p>Сейчас: <code>{esc(cur)}</code></p>" + TARGET_HINT,
+               kb([btn("Отмена", "proto:card:xray", icon="no")]))
+    await cb.answer()
+
+
+@router.message(XrayTarget.domain)
+async def xray_target_input(m: Message, state: FSMContext):
+    if not is_admin(m.from_user.id):
+        return await state.clear()
+    domain = xray.valid_domain(m.text or "")
+    cancel = kb([btn("Отмена", "proto:card:xray", icon="no")])
+    if not domain:
+        return await show(m, f"<p>{em('warn')} Нужен домен, например "
+                             f"<code>www.example.com</code>. Пришли ещё раз.</p>", cancel)
+    await show(m, f"<p>{em('pending')} Проверяю <code>{esc(domain)}</code>: TLS 1.3 и h2…</p>")
+    t = await asyncio.to_thread(xray.check_target, domain)
+    if not t["ok"]:
+        return await show(m, f"<p>{em('error')} <code>{esc(domain)}</code> не подходит: "
+                             f"TLS 1.3 — {'да' if t['tls13'] else 'нет'}, "
+                             f"h2 — {'да' if t['h2'] else 'нет'}. {esc(t['error'])}</p>"
+                             f"<p>Пришли другой домен.</p>", cancel)
+    await state.clear()
+    try:
+        await asyncio.to_thread(XRAY.set_target, domain)
+    except Exception as e:
+        return await show(m, f"<p>{em('error')} Не получилось применить: "
+                             f"<code>{esc(str(e)[:300])}</code></p>",
+                          kb([btn("VLESS", "proto:card:xray", icon="back")]))
+    await asyncio.to_thread(detect.refresh)
+    text, markup = protocol_card("xray")
+    await show(m, f"<p>{em('ok')} Цель REALITY — <code>{esc(domain)}</code>. Xray перезапущен.</p>"
+                  f"<blockquote>{em('warn')} У клиентов в ссылках старый SNI — им нужно "
+                  f"обновить подписку в приложении (Админка → Рассылка → шаблон «Обновите "
+                  f"подписку»).</blockquote>" + text, markup)
 
 
 @router.callback_query(F.data == "pxu")

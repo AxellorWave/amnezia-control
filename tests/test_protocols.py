@@ -189,13 +189,14 @@ def test_device_limit_and_notices():
     assert should_notify(902, "B") and not should_notify(902, "B")
 
 
-def test_subscription_response():
+def test_subscription_response(monkeypatch):
     import asyncio
     from aiohttp.test_utils import make_mocked_request
     from app import db, sub_server
     db.set_user(903, name="s", status="approved")
     u = db.ensure_creds(903)
-    sub_server.build_sub = lambda user: ["vless://x@h:1#a", "hysteria2://y@h:2/#b"]
+    monkeypatch.setattr(sub_server, "build_sub",
+                        lambda user: ["vless://x@h:1#a", "hysteria2://y@h:2/#b"])
     req = make_mocked_request("GET", f"/sub/{u['sub_token']}", headers={"x-hwid": "Z"},
                               match_info={"token": u["sub_token"]})
     resp = asyncio.run(sub_server.sub_handler(req))
@@ -218,3 +219,14 @@ def test_block_ru_off_by_default_and_xray_runs_as_root(monkeypatch):
     monkeypatch.setattr(xray, "host_dir", lambda: "/data/xray")
     xray.run_container({"image": "img"})
     assert "--user" in calls[0] and calls[0][calls[0].index("--user") + 1] == "0:0"
+
+
+def test_subscription_order_xhttp_hysteria_then_tcp(monkeypatch):
+    from app import sub_server
+    monkeypatch.setattr(sub_server.detect, "running", lambda pid: True)
+    monkeypatch.setattr(sub_server.SUB_PROTOCOLS["xray"], "links",
+                        lambda u, name: ["vless-tcp", "vless-xhttp"])
+    monkeypatch.setattr(sub_server.SUB_PROTOCOLS["hy2"], "links", lambda u, name: ["hy2"])
+    assert sub_server.build_sub({}) == ["vless-xhttp", "hy2", "vless-tcp"]
+    monkeypatch.setattr(sub_server.SUB_PROTOCOLS["xray"], "links", lambda u, name: ["vless-tcp"])
+    assert sub_server.build_sub({}) == ["hy2", "vless-tcp"]

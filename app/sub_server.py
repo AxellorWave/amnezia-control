@@ -137,12 +137,17 @@ def placeholder(title: str) -> str:
 
 
 def build_sub(u) -> list[str]:
-    links = []
+    """Порядок серверов в подписке: VLESS XHTTP, Hysteria 2, VLESS TCP. Многие приложения
+    берут первый сервер по умолчанию, а XHTTP устойчивее к обрывам долгих TCP-соединений."""
     name = SERVER_NAME
-    for pid, proto in SUB_PROTOCOLS.items():
-        if detect.running(pid):
-            links += proto.links(u, name)
-    return links
+    got = {pid: proto.links(u, name) for pid, proto in SUB_PROTOCOLS.items()
+           if detect.running(pid)}
+    xr = got.pop("xray", [])
+    vision, xhttp = xr[:1], xr[1:]
+    links = xhttp + got.pop("hy2", [])
+    for rest in got.values():
+        links += rest
+    return links + vision
 
 
 def rate_ok(ip: str) -> bool:

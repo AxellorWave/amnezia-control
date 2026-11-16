@@ -323,6 +323,15 @@ class Xray(Protocol):
     def restart(self) -> None:
         docker("restart", CONTAINER, timeout=120)
 
+    def set_target(self, domain: str) -> None:
+        """Сменить цель REALITY (SNI). Ссылки клиентов меняются — нужно обновить подписку."""
+        s = self.settings()
+        s["sni"] = domain
+        write_config(s, self.users())
+        self.save_settings(s)
+        self.restart()
+        wait_started()
+
     def set_block_ru(self, on: bool) -> None:
         s = self.settings()
         s["block_ru"] = bool(on)
