@@ -84,6 +84,16 @@ def protocols_view() -> tuple[str, InlineKeyboardMarkup]:
                         fmt_ports(o["ports"])] for o in others],
                       head=["Ещё на сервере", "Контейнер", "Состояние", "Порты"],
                       caption="Установлено, ботом не поддерживается")
+    if detect.sub_protocols():
+        from .. import sub_server
+        text += kv([(f"{em('subscription')} Подписки",
+                     f"<code>{sub_server.scheme()}://{esc(sub_server.SUB_HOST)}:"
+                     f"{sub_server.SUB_PORT}/sub/…</code>")])
+        if sub_server.scheme() == "http" and not hysteria.is_ip(sub_server.SUB_HOST):
+            text += (f"<blockquote>{em('lock')} Подписки отдаются по HTTP. Выпусти сертификат "
+                     f"Let's Encrypt для <code>{esc(sub_server.SUB_HOST)}</code> (нужен свободный "
+                     f"80/TCP).</blockquote>")
+            rows.append([btn("Сертификат для подписок", "psc", icon="lock")])
     ts = datetime.fromtimestamp(st["ts"]).strftime("%H:%M:%S") if st.get("ts") else "—"
     text += f"<footer>{em('clock')} проверено {ts}</footer>"
     rows.append([btn("Обновить", "proto:refresh", icon="refresh")])
@@ -553,4 +563,26 @@ async def cb_xray_update(cb: CallbackQuery):
             return await prog.fail(e, kb([btn("Протоколы", "proto", icon="back")]))
     await asyncio.to_thread(detect.refresh)
     await prog.show(f"<p>{em('ok')} Xray обновлён: <code>{esc(image)}</code></p>",
+                    kb([btn("Протоколы", "proto", icon="protocols")]))
+
+
+@router.callback_query(F.data == "psc")
+@admin_only
+async def cb_sub_cert(cb: CallbackQuery):
+    from .. import sub_server
+    if job_lock.locked():
+        return await cb.answer("Уже идёт другая операция", show_alert=True)
+    await cb.answer()
+    async with job_lock:
+        prog = Progress(cb.message, f"{em('lock')} Сертификат для подписок")
+        await prog.show()
+        try:
+            prog(f"Let's Encrypt для {sub_server.SUB_HOST} (порт 80/TCP)")
+            await asyncio.to_thread(hysteria.obtain_le, sub_server.SUB_HOST)
+            prog("Перезапуск сервера подписок с HTTPS")
+            await sub_server.restart_public()
+        except Exception as e:
+            return await prog.fail(e, kb([btn("Протоколы", "proto", icon="back")]))
+    await prog.show(f"<p>{em('ok')} Подписки теперь по HTTPS. Пользователям нужно обновить "
+                    f"ссылку подписки (кнопка «Моя подписка»).</p>",
                     kb([btn("Протоколы", "proto", icon="protocols")]))

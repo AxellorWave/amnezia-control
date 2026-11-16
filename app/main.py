@@ -6,7 +6,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.types import BotCommand
 
-from . import detect, geo, sub_server
+from . import detect, geo, sub_server, subsync
 from .config import ADMIN_IDS, BOT_TOKEN
 from .db import touch_bot
 from .handlers import admin, protocols_admin, user
@@ -52,7 +52,9 @@ async def main():
     dp.include_router(protocols_admin.router)
     await bot.set_my_commands([BotCommand(command="start", description="Главное меню"),
                                BotCommand(command="help", description="Как подключиться")])
+    sub_server.set_bot(bot)
     await sub_server.start()
+    await subsync.sync_all()
     if not detect.any_installed():
         for admin_id in ADMIN_IDS:
             await notify(bot, admin_id, f"<h3>{em('protocols')} VPN ещё не настроен</h3>"

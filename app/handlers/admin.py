@@ -17,6 +17,7 @@ from ..protocols.awg import peer_stats, remove_peer, server_info, server_peers, 
 from ..traffic import account_traffic, user_traffic
 from ..ui import (btn, dot, em, esc, fmt_bytes, fmt_seen, fmt_traffic, is_online, kb, kv,
                   notify, show, table, user_line, user_table)
+from ..subsync import access_changed, sync_all
 from .user import delete_device, status_view
 
 log = logging.getLogger("amnezia-bot")
@@ -232,6 +233,7 @@ async def approve(cb: CallbackQuery, bot: Bot):
     if not u:
         return await cb.answer("Пользователь не найден", show_alert=True)
     set_user(chat_id, status="approved")
+    await access_changed(chat_id, True)
     await show(cb, f"<h3>{em('ok')} Заявка одобрена</h3>" + user_table(u),
                kb([btn("Открыть карточку", f"u:{chat_id}", icon="user")]))
     sent = await notify_approved(bot, chat_id)
@@ -258,6 +260,7 @@ async def restore(cb: CallbackQuery, bot: Bot):
     if u["status"] not in ("denied", "revoked"):
         return await cb.answer("Доступ уже не закрыт", show_alert=True)
     set_user(chat_id, status="approved")
+    await access_changed(chat_id, True)
     sent = await notify_approved(bot, chat_id)
     await cb.answer("Доступ возвращён" if sent else
                     "Доступ возвращён, но написать ему не вышло (бот заблокирован?)",
@@ -297,6 +300,7 @@ async def do_revoke(cb: CallbackQuery, bot: Bot):
     for d in user_devices(chat_id):
         await delete_device(d)
     set_user(chat_id, status="revoked")
+    await access_changed(chat_id, False)
     await notify(bot, chat_id, f"<p>{em('denied')} Твой доступ к VPN отозван.</p>")
     await cb.answer("Доступ отозван")
     await show(cb, *(await asyncio.to_thread(user_card, chat_id)))
@@ -307,7 +311,9 @@ async def do_revoke(cb: CallbackQuery, bot: Bot):
 async def allow_again(cb: CallbackQuery):
     chat_id = int(cb.data[3:])
     db.execute("DELETE FROM users WHERE chat_id=?", (chat_id,))
+    db.execute("DELETE FROM sub_devices WHERE chat_id=?", (chat_id,))
     db.commit()
+    await sync_all()
     await cb.answer("Теперь он может снова отправить заявку через /start", show_alert=True)
     await show(cb, *users_list())
 

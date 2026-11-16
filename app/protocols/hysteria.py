@@ -369,11 +369,14 @@ async def renew_loop() -> None:
     while True:
         await asyncio.sleep(86400)
         s = HY2.settings()
-        if not s or s.get("self_signed"):
+        if (not s or s.get("self_signed")) and not os.path.isdir(os.path.join(certs_dir(), "live")):
             continue
         try:
             if await asyncio.to_thread(renew_le):
-                await asyncio.to_thread(HY2.restart)
+                from ..sub_server import reload_tls
+                reload_tls()
+                if s and not s.get("self_signed"):
+                    await asyncio.to_thread(HY2.restart)
                 log.info("Сертификат обновлён, Hysteria перезапущена")
         except Exception as e:
             log.warning("cert renew failed: %s", e)
