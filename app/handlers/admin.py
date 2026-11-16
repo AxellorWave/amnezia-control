@@ -18,6 +18,7 @@ from ..traffic import account_traffic, user_traffic
 from ..ui import (btn, dot, em, esc, fmt_bytes, fmt_seen, fmt_traffic, is_online, kb, kv,
                   notify, show, table, user_line, user_table)
 from ..subsync import access_changed, sync_all
+from .subscription import user_sub_summary
 from .user import delete_device, status_view
 
 log = logging.getLogger("amnezia-bot")
@@ -127,7 +128,8 @@ def user_card(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
             + kv([("Статус", f"{em(STATUS_EMOJI.get(s, 'question'))} {STATUS_NAME.get(s, esc(s))}"),
                   (f"{em('calendar')} С нами с", (u["created"] or "")[:10]),
                   (f"{em('devices')} Лимит устройств", limit),
-                  (f"{em('traffic')} Трафик всего", fmt_traffic(*user_traffic(chat_id)))]))
+                  (f"{em('traffic')} Трафик всего", fmt_traffic(*user_traffic(chat_id)))]
+                 + user_sub_summary(chat_id)))
     rows = []
     if devs:
         text += table([[dot(stats.get(d["pub"])), esc(d["name"]), f"<code>{d['ip']}</code>",
@@ -243,11 +245,19 @@ async def approve(cb: CallbackQuery, bot: Bot):
 
 async def notify_approved(bot: Bot, chat_id: int) -> bool:
     """Сообщить об одобрении; False — если бот заблокирован или чат недоступен."""
+    rows = []
+    if detect.sub_protocols():
+        rows.append([btn("Моя подписка", "sub", style="primary", icon="subscription")])
+    if detect.running("awg"):
+        rows.append([btn("Добавить устройство", "add", style=None if rows else "primary",
+                         icon="add")])
+    rows.append([btn("Как подключиться", "help", icon="help")])
+    first = ("Возьми ссылку-подписку или добавь первое устройство"
+             if len(rows) > 2 else "Добавь своё первое устройство" if detect.running("awg")
+             else "Возьми ссылку-подписку" if detect.sub_protocols() else "Загляни в меню")
     return await notify(bot, chat_id,
                         f"<h2>{em('party')} Доступ одобрен!</h2>"
-                        f"<p>Добавь своё первое устройство, а потом загляни в «Как подключиться».</p>",
-                        kb([btn("Добавить устройство", "add", style="primary", icon="add")],
-                           [btn("Как подключиться", "help", icon="help")]))
+                        f"<p>{first}, а потом загляни в «Как подключиться».</p>", kb(*rows))
 
 
 @router.callback_query(F.data.startswith("rs:"))

@@ -53,17 +53,24 @@ def main_menu(uid: int) -> tuple[str, InlineKeyboardMarkup]:
     n = devices_count(uid)
     lim = device_limit(uid)
     limit = "" if lim is None else f" из {lim}"
+    subs = detect.sub_protocols()
     info = []
-    if st:
+    if st or subs:
         info.append((f"{em('devices')} Устройств", f"<b>{n}{limit}</b>"))
     info += [(f"{em('traffic')} Трафик", fmt_traffic(*user_traffic(uid))),
              (f"{em('globe')} Сервер", server_location_html())]
+    about = ("Здесь можно выпустить конфиг для каждого устройства" if st else "")
+    if subs:
+        about += (" или взять одну ссылку-подписку на все устройства" if about
+                  else "Здесь — твоя ссылка-подписка на все устройства")
     text = (f"<h2>{em('vpn')} Привет, {name}!</h2>"
-            f"<p>Это твой личный VPN. Здесь можно выпустить конфиг для каждого устройства "
-            f"и посмотреть, как подключиться.</p>" + kv(info))
+            f"<p>Это твой личный VPN. {about} и посмотреть, как подключиться.</p>" + kv(info))
     if st == "stopped":
         text += (f"<blockquote>{em('warn')} AmneziaWG временно недоступен — выдача новых "
                  f"конфигов отключена. Администратор уже в курсе.</blockquote>")
+    if subs:
+        rows.append([btn("Моя подписка", "sub", style=None if st else "primary",
+                         icon="subscription")])
     if st:
         rows.append([btn("Мои устройства", "devs", icon="devices")])
         if st == "running":
@@ -137,7 +144,12 @@ def help_menu() -> tuple[str, InlineKeyboardMarkup]:
                       "AmneziaVPN"],
                      ["iOS 15–16, старые Android", "AmneziaWG + файл .conf"]],
                     head=["Устройство", "Приложение"]))
-    return text, kb([btn("Android", "guide:android", icon="android"),
+    rows_sub = []
+    if detect.sub_protocols():
+        text += (f"<blockquote>{em('subscription')} Есть и <b>подписка</b> (VLESS, Hysteria2) — "
+                 f"одна ссылка для Happ, v2RayTun или Hiddify на всех устройствах.</blockquote>")
+        rows_sub = [btn("Подписка: Happ, v2RayTun, Hiddify", "sg", icon="subscription")]
+    return text, kb(rows_sub, [btn("Android", "guide:android", icon="android"),
                      btn("iPhone", "guide:ios", icon="apple")],
                     [btn("Windows", "guide:windows", icon="windows"),
                      btn("macOS", "guide:mac", icon="apple"),
@@ -285,6 +297,32 @@ def guide_desktop(os_name: str) -> str:
 STATUS_ROWS_MAX = 100
 
 
+def sub_status(kind: str, uid: int) -> str:
+    """Подписка (Xray / Hysteria2) в статусе: у человека — своё, у админа — сводка."""
+    from ..protocols.registry import TITLES
+    from ..traffic import ONLINE_NOW
+    subs = detect.sub_protocols()
+    if not subs:
+        return ""
+    icon = {"xray": "xray", "hy2": "hysteria"}
+    rows = []
+    for pid in subs:
+        if kind == "a":
+            r = db.execute("SELECT COALESCE(SUM(rx_total),0), COALESCE(SUM(tx_total),0) "
+                           "FROM traffic WHERE proto=?", (pid,)).fetchone()
+            rows.append([f"{em(icon[pid])} {TITLES[pid]}",
+                         f"{em('online')} {len(ONLINE_NOW.get(pid, set()))}",
+                         fmt_bytes(r[0] + r[1])])
+        else:
+            from ..traffic import proto_traffic
+            rx, tx = proto_traffic(uid, pid)
+            on = uid in ONLINE_NOW.get(pid, set())
+            rows.append([f"{em(icon[pid])} {TITLES[pid]}",
+                         em("online" if on else "offline") + (" в сети" if on else ""),
+                         fmt_bytes(rx + tx)])
+    return table(rows, head=["Подписка", "В сети", "Трафик"])
+
+
 def status_view(kind: str, uid: int) -> tuple[str, InlineKeyboardMarkup]:
     stats = peer_stats()
     account_traffic(stats)
@@ -307,7 +345,7 @@ def status_view(kind: str, uid: int) -> tuple[str, InlineKeyboardMarkup]:
         title = f"{em('status')} Сервер"
     else:
         rows = [(esc(d["name"]), d["pub"]) for d in user_devices(uid)]
-        title = f"{em('status')} Мои устройства"
+        title = f"{em('status')} Мой VPN"
 
     items = []
     for name, pub in rows:
@@ -332,8 +370,9 @@ def status_view(kind: str, uid: int) -> tuple[str, InlineKeyboardMarkup]:
                       head=["", "Устройство", "Подключение", "Трафик"])
         if len(items) > STATUS_ROWS_MAX:
             text += f"<p><i>…и ещё {len(items) - STATUS_ROWS_MAX}</i></p>"
-    else:
+    elif awg_state():
         text += "<p>Устройств пока нет.</p>"
+    text += sub_status(kind, uid)
     text += f"<footer>{em('clock')} обновлено {datetime.now().strftime('%H:%M:%S')}</footer>"
     back = btn("Админка", "adm", icon="back") if kind == "a" else btn("Меню", "menu", icon="back")
     return text, kb([btn("Обновить", "adm:dash" if kind == "a" else "status", icon="refresh")], [back])

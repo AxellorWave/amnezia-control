@@ -6,11 +6,10 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.types import BotCommand
 
-from . import detect, geo, sub_server, subsync
+from . import backup, detect, geo, sub_server, subsync
 from .config import ADMIN_IDS, BOT_TOKEN
 from .db import touch_bot
-from . import backup
-from .handlers import admin, backup_admin, protocols_admin, uninstall, user
+from .handlers import admin, backup_admin, protocols_admin, subscription, uninstall, user
 from .protocols import awg, hysteria
 from .protocols.awg import server_info
 from .traffic import traffic_loop
@@ -49,6 +48,7 @@ async def main():
     dp = Dispatcher()
     dp.update.outer_middleware(touch_middleware)
     dp.include_router(user.router)
+    dp.include_router(subscription.router)
     dp.include_router(admin.router)
     dp.include_router(protocols_admin.router)
     dp.include_router(backup_admin.router)
