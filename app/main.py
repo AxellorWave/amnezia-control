@@ -8,6 +8,7 @@ from aiogram.types import BotCommand
 
 from . import detect, geo
 from .config import ADMIN_IDS, BOT_TOKEN
+from .db import touch_bot
 from .handlers import admin, protocols_admin, user
 from .protocols import awg
 from .protocols.awg import server_info
@@ -16,6 +17,17 @@ from .ui import btn, em, kb, notify
 
 log = logging.getLogger("amnezia-bot")
 _bg: list[asyncio.Task] = []      # держим ссылки на фоновые задачи
+
+
+async def touch_middleware(handler, event, data):
+    """Запомнить время последнего действия человека в боте (для рассылок и инцидентов)."""
+    user = data.get("event_from_user")
+    if user:
+        try:
+            touch_bot(user.id)
+        except Exception as e:
+            log.debug("touch failed: %s", e)
+    return await handler(event, data)
 
 
 async def main():
@@ -34,6 +46,7 @@ async def main():
     log.info("Протоколы: %s", {p: (detect.get(p) or {}).get("state") for p in ("awg", "xray", "hy2")})
     bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     dp = Dispatcher()
+    dp.update.outer_middleware(touch_middleware)
     dp.include_router(user.router)
     dp.include_router(admin.router)
     dp.include_router(protocols_admin.router)

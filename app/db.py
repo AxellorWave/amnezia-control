@@ -1,5 +1,7 @@
 """SQLite: подключение, миграции и простые хелперы."""
+import secrets
 import sqlite3
+import uuid
 from datetime import datetime
 
 from .config import DB_PATH
@@ -39,6 +41,28 @@ def init_db():
     # протоколы, установленные/известные боту: порты, ключи, SNI и т.п. в settings (JSON)
     db.execute("""CREATE TABLE IF NOT EXISTS protocols (id TEXT PRIMARY KEY, origin TEXT,
                   container TEXT, settings TEXT, installed_at TEXT)""")
+    # подписка (VLESS / Hysteria2): общие для всех устройств человека креды и токен ссылки;
+    # last_seen_bot — последнее действие в боте, last_online — последний онлайн в любом протоколе
+    have = [r[1] for r in db.execute("PRAGMA table_info(users)")]
+    for c, typ in (("uuid", "TEXT"), ("hy2_pass", "TEXT"), ("sub_token", "TEXT"),
+                   ("last_seen_bot", "TEXT"), ("last_online", "TEXT"),
+                   ("blocked_bot", "INTEGER NOT NULL DEFAULT 0")):
+        if c not in have:
+            db.execute(f"ALTER TABLE users ADD COLUMN {c} {typ}")
+    db.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_sub_token ON users(sub_token)")
+    # устройства, забиравшие подписку (по HWID из заголовков клиента)
+    db.execute("""CREATE TABLE IF NOT EXISTS sub_devices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, hwid TEXT, os TEXT, model TEXT,
+        app TEXT, first_seen TEXT, last_seen TEXT, UNIQUE(chat_id, hwid))""")
+    # когда пользователю последний раз писали о превышении лимита устройств
+    db.execute("""CREATE TABLE IF NOT EXISTS limit_notices (chat_id INTEGER, hwid TEXT,
+                  sent_at REAL, PRIMARY KEY(chat_id, hwid))""")
+    # трафик Xray/Hysteria2 — по пользователю (у AWG — по устройствам, в devices);
+    # owner_kind: "user" (owner_id = chat_id)
+    db.execute("""CREATE TABLE IF NOT EXISTS traffic (owner_kind TEXT, owner_id INTEGER,
+                  proto TEXT, rx_total INTEGER NOT NULL DEFAULT 0,
+                  tx_total INTEGER NOT NULL DEFAULT 0, rx_last INTEGER NOT NULL DEFAULT 0,
+                  tx_last INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(owner_kind, owner_id, proto))""")
     db.commit()
 
 
@@ -68,6 +92,42 @@ def user_devices(chat_id: int):
 
 def get_device(dev_id: int):
     return db.execute("SELECT * FROM devices WHERE id=?", (dev_id,)).fetchone()
+
+
+def sub_devices(chat_id: int):
+    return db.execute("SELECT * FROM sub_devices WHERE chat_id=? ORDER BY last_seen DESC",
+                      (chat_id,)).fetchall()
+
+
+def devices_count(chat_id: int) -> int:
+    """Все устройства человека для лимита: AWG-устройства + устройства подписки."""
+    return (db.execute("SELECT COUNT(*) FROM devices WHERE chat_id=?", (chat_id,)).fetchone()[0]
+            + db.execute("SELECT COUNT(*) FROM sub_devices WHERE chat_id=?",
+                         (chat_id,)).fetchone()[0])
+
+
+def new_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def ensure_creds(chat_id: int) -> sqlite3.Row:
+    """Сгенерировать UUID (VLESS), пароль Hysteria2 и токен подписки, если их ещё нет."""
+    u = get_user(chat_id)
+    fields = {}
+    if not u["uuid"]:
+        fields["uuid"] = str(uuid.uuid4())
+    if not u["hy2_pass"]:
+        fields["hy2_pass"] = secrets.token_urlsafe(18)
+    if not u["sub_token"]:
+        fields["sub_token"] = new_token()
+    if fields:
+        set_user(chat_id, **fields)
+    return get_user(chat_id)
+
+
+def touch_bot(chat_id: int) -> None:
+    db.execute("UPDATE users SET last_seen_bot=?, blocked_bot=0 WHERE chat_id=?", (now(), chat_id))
+    db.commit()
 
 
 def bot_pubs() -> set[str]:

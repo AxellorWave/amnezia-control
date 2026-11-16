@@ -12,7 +12,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardMarkup
 from .. import detect
 from ..access import device_limit, has_access, is_admin, own_device
 from ..config import (ADMIN_IDS, ANDROID_URL, DESKTOP_SITE_URL, DESKTOP_URL, IOS_URL)
-from ..db import db, get_device, get_user, now, set_user, user_devices
+from ..db import db, devices_count, get_device, get_user, now, set_user, user_devices
 from ..geo import server_location_html
 
 from ..protocols.awg import (add_peer, amnezia_key, client_conf, peer_stats, qr_png, remove_peer, server_info,
@@ -50,7 +50,7 @@ def main_menu(uid: int) -> tuple[str, InlineKeyboardMarkup]:
             rows.append([btn("Админка", "adm", icon="admin")])
         return text, kb(*rows)
 
-    n = len(user_devices(uid))
+    n = devices_count(uid)
     lim = device_limit(uid)
     limit = "" if lim is None else f" из {lim}"
     info = []
@@ -412,7 +412,7 @@ async def ask_name(cb: CallbackQuery, state: FSMContext):
         return await cb.answer("AmneziaWG сейчас недоступен — выдача новых конфигов временно "
                                "отключена.", show_alert=True)
     lim = device_limit(uid)
-    if lim is not None and len(user_devices(uid)) >= lim:
+    if lim is not None and devices_count(uid) >= lim:
         return await cb.answer(f"Максимум {lim} устройств. Удали ненужное.", show_alert=True)
     await state.set_state(AddDevice.name)
     await show(cb, f"<h3>{em('edit')} Новое устройство</h3>"
@@ -437,7 +437,7 @@ async def create_device(m: Message, bot: Bot, state: FSMContext):
     if any(d["name"].lower() == name.lower() for d in user_devices(uid)):
         return await show(m, f"<p>{em('warn')} Такое устройство уже есть — придумай другое название.</p>")
     lim = device_limit(uid)
-    if lim is not None and len(user_devices(uid)) >= lim:
+    if lim is not None and devices_count(uid) >= lim:
         await state.clear()
         return await show(m, f"<p>{em('warn')} Максимум {lim} устройств.</p>")
     if awg_state() != "running":

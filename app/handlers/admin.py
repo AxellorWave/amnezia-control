@@ -12,7 +12,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from .. import detect
 from ..access import is_admin
 from ..config import MAX_DEVICES, VPN_HOST
-from ..db import bot_pubs, db, get_user, set_user, user_devices
+from ..db import bot_pubs, db, devices_count, get_user, set_user, user_devices
 from ..protocols.awg import peer_stats, remove_peer, server_info, server_peers, wg_lock
 from ..traffic import account_traffic, user_traffic
 from ..ui import (btn, dot, em, esc, fmt_bytes, fmt_seen, fmt_traffic, is_online, kb, kv,
@@ -85,7 +85,7 @@ def users_list(flt: str = "") -> tuple[str, InlineKeyboardMarkup]:
     users = db.execute(sql).fetchall()
     rows, lines = [], []
     for u in users[:USERS_LIST_MAX]:
-        n = len(user_devices(u["chat_id"]))
+        n = devices_count(u["chat_id"])
         who = f"@{u['username']}" if u["username"] else str(u["chat_id"])
         rows.append([btn(f"{u['name'] or 'без имени'} · {who} · {n} устр.", f"u:{u['chat_id']}",
                          icon=STATUS_EMOJI.get(u["status"]))])
@@ -336,7 +336,7 @@ async def ask_limit(cb: CallbackQuery, state: FSMContext):
 
 def limit_saved(chat_id: int, value: int | None) -> str:
     set_user(chat_id, max_devices=value)
-    n = len(user_devices(chat_id))
+    n = devices_count(chat_id)
     text = (f"<p>{em('ok')} Лимит устройств: <b>{value}</b></p>" if value is not None else
             f"<p>{em('ok')} Лимит сброшен — общий, <b>{MAX_DEVICES}</b></p>")
     lim = MAX_DEVICES if value is None else value
