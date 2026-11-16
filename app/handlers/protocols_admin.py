@@ -135,8 +135,10 @@ def protocol_card(pid: str) -> tuple[str, InlineKeyboardMarkup]:
         rows.append([btn("Обновить Xray", "pxu", icon="download")])
     if e and pid in ("xray", "hy2"):
         on = bool((PROTO_OBJ[pid].settings() or {}).get("block_ru"))
-        text += kv([("Блок RU", "включён — российские сайты через этот протокол не открываются"
-                     if on else "выключен")])
+        text += kv([("Блок RU", "включён — российские сайты через этот протокол не открываются; "
+                     "пользователи видят в подписке красное предупреждение, у сервера в "
+                     "приложении пометка «без RU»" if on else
+                     "выключен — пользователям советуем раздельное туннелирование")])
         rows.append([btn("Выключить блок RU" if on else "Включить блок RU", f"pbr:{pid}",
                          icon="globe")])
     if e and e["ports"] or protocol_ports(pid):

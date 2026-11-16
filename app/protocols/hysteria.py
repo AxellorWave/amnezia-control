@@ -358,7 +358,10 @@ class Hysteria(Protocol):
         s = self.settings()
         if not s or not user["hy2_pass"]:
             return []
-        return [hy2_link(s, user["hy2_pass"], name or "VPN")]
+        name = name or "VPN"
+        if s.get("block_ru"):
+            name += " · без RU"   # видно в списке серверов приложения
+        return [hy2_link(s, user["hy2_pass"], name)]
 
 
 def auth_check(password: str) -> str | None:

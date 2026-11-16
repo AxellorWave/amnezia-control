@@ -37,6 +37,39 @@ def fmt_dt(s: str | None) -> str:
     return d.strftime("%d.%m.%Y")
 
 
+def ru_blocked_protocols() -> list[str]:
+    """Протоколы подписки, на которых включён блок RU (российские сайты не открываются)."""
+    res = []
+    for pid in detect.sub_protocols():
+        try:
+            if (SUB_PROTOCOLS[pid].settings() or {}).get("block_ru"):
+                res.append(pid)
+        except Exception as e:
+            log.debug("block_ru %s: %s", pid, e)
+    return res
+
+
+HOW_TO_SPLIT = ("«Списки сервисов» → «Российские сервисы» → отметь нужное (или «Все сайты "
+                ".ru / .рф / .su») → режим «Всё через VPN, кроме выбранных» → «Получить файлы» → "
+                "своё приложение")
+
+
+def ru_notice() -> str:
+    """Предупреждение про российские сайты для экранов подписки."""
+    blocked = ru_blocked_protocols()
+    if blocked:
+        names = " и ".join(TITLES[p] for p in blocked)
+        w = em("warn")
+        return (f"<blockquote>{w}{w}{w} <b>На {esc(names)} российские сайты ЗАБЛОКИРОВАНЫ!</b> "
+                f"{w}{w}{w}<br>Банки, Госуслуги, Яндекс, VK, маркетплейсы и другие российские "
+                f"сайты через {'эти протоколы' if len(blocked) > 1 else 'этот протокол'} "
+                f"<b>не откроются</b>. Обязательно настрой раздельное туннелирование, чтобы "
+                f"они шли напрямую: {HOW_TO_SPLIT}.</blockquote>")
+    return (f"<blockquote>{em('idea')} Желательно настроить раздельное туннелирование: "
+            f"российские сайты пойдут напрямую — быстрее и без проблем с банками и "
+            f"Госуслугами. {HOW_TO_SPLIT}.</blockquote>")
+
+
 def sub_view(uid: int) -> tuple[str, InlineKeyboardMarkup]:
     u = ensure_creds(uid)
     url = sub_server.sub_url(u["sub_token"])
@@ -55,6 +88,7 @@ def sub_view(uid: int) -> tuple[str, InlineKeyboardMarkup]:
             f"сами. Нажми на ссылку, чтобы скопировать.</p>"
             f"<pre>{esc(url)}</pre>"
             + table(rows_t, head=["Протокол", "Состояние", "Трафик"])
+            + ru_notice()
             + kv([(f"{em('sub_devices')} Устройств подписки", f"<b>{n}</b>"
                    + ("" if lim is None else
                       f" <i>(общий лимит {lim} — вместе с устройствами AmneziaWG)</i>"))])
@@ -65,8 +99,9 @@ def sub_view(uid: int) -> tuple[str, InlineKeyboardMarkup]:
             [btn("v2RayTun", url=sub_server.open_url("v2raytun", t), icon="play"),
              btn("Hiddify", url=sub_server.open_url("hiddify", t), icon="play")],
             [btn("QR-код", "sub:qr", icon="qr"), btn("Как подключиться", "sg", icon="help")],
-            [btn("Раздельное туннелирование", "sgs", icon="ip_change"),
-             btn("Списки сервисов", "routes", icon="globe")],
+            [btn("Списки сервисов", "routes", icon="globe",
+                 style="danger" if ru_blocked_protocols() else "primary"),
+             btn("Раздельное туннелирование", "sgs", icon="ip_change")],
             [btn("Устройства подписки", "subdev", icon="sub_devices")],
             [btn("Перевыпустить ссылку", "sub:reissue", icon="refresh"),
              btn("Не работает VPN", "sos", icon="sos")],
@@ -97,12 +132,20 @@ def devices_view(uid: int) -> tuple[str, InlineKeyboardMarkup]:
     return text, kb(*rows)
 
 
+def _with_notice(view: tuple[str, InlineKeyboardMarkup]) -> tuple[str, InlineKeyboardMarkup]:
+    text, markup = view
+    markup.inline_keyboard.insert(0, [btn("Списки сервисов", "routes", icon="globe",
+                                          style="danger" if ru_blocked_protocols()
+                                          else "primary")])
+    return text + ru_notice(), markup
+
+
 def guides_view() -> tuple[str, InlineKeyboardMarkup]:
-    return guides.sub_index()
+    return _with_notice(guides.sub_index())
 
 
 def guide_view(key: str) -> tuple[str, InlineKeyboardMarkup]:
-    return guides.sub_guide(key)
+    return _with_notice(guides.sub_guide(key))
 
 
 def allowed(uid: int) -> bool:

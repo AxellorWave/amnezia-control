@@ -263,7 +263,8 @@ async def routing_handler(request: web.Request) -> web.Response:
 
     def build() -> str:
         p = routes.get_prefs(u["chat_id"])
-        return routes.happ_link(routes.happ_profile(routes.collect(p["services"]), p["mode"]),
+        return routes.happ_link(routes.happ_profile(routes.collect(p["services"]), p["mode"],
+                                                    SERVER_NAME),
                                 client)
 
     target = await asyncio.to_thread(build)

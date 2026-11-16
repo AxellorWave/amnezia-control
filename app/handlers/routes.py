@@ -10,6 +10,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardMarkup
 
 from .. import detect, routes
 from ..access import has_access
+from ..config import SERVER_NAME
 from ..db import get_user, user_devices
 from ..ui import btn, em, esc, file_name, kb, kv, show, table, with_emoji_fallback
 
@@ -146,7 +147,11 @@ def instructions(client: str, mode: str) -> str:
         return (f"<b>{name}</b>\n"
                 f"1. Нажми «Добавить в {name}» (или скопируй ссылку из файла — {name} сам "
                 f"предложит импорт из буфера).\n"
-                f"2. Профиль «VPN» добавится и включится: Настройки → Маршрутизация.\n"
+                f"2. Профиль «{esc(SERVER_NAME)}» добавится и сразу включится — он в списке "
+                f"профилей маршрутизации в настройках {name}.\n"
+                f"Менять список удобнее здесь, в «Списках сервисов», и снова нажать «Добавить»: "
+                f"профиль с тем же именем заменится. Правки, сделанные в самом приложении, "
+                f"перезапишутся при следующем обновлении подписки.\n"
                 f"3. Переподключись — правила применяются после переподключения.\n"
                 f"Отключить: Настройки → Маршрутизация → выключи переключатель.")
     if client == "hiddify":
@@ -176,7 +181,7 @@ def build_files(uid: int, client: str) -> tuple[list[tuple[str, bytes]], str, st
         if data["zones"]:
             note = "Зоны .ru/.рф/.su в AmneziaVPN по доменам не задаются — использованы подсети."
     elif client in ("happ", "incy"):
-        prof = routes.happ_profile(data, mode)
+        prof = routes.happ_profile(data, mode, SERVER_NAME)
         link = routes.happ_link(prof, client)
         files = [(f"{client}-routing.txt", (link + "\n").encode()),
                  (f"{client}-routing.json", json.dumps(prof, ensure_ascii=False,
