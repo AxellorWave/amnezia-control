@@ -67,7 +67,8 @@ def admin_menu() -> tuple[str, InlineKeyboardMarkup]:
                      [f"{em('devices')} Устройств через бота", f"<b>{devices}</b>"],
                      [f"{em('app')} Из приложения", f"<b>{app_n}</b>"],
                      [f"{em('online')} Сейчас в сети", f"<b>{online}</b>"]]))
-    rows = [[btn("Протоколы", "proto", icon="protocols")],
+    rows = [[btn("Протоколы", "proto", icon="protocols"),
+             btn("Мониторинг", "inc:status", icon="health_ok")],
             [btn("Рассылка", "bc", icon="broadcast")]
             + ([btn("Обновите подписку", "bc:tpl:sub", icon="subscription")]
                if detect.sub_protocols() else []),

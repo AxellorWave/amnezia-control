@@ -78,7 +78,8 @@ def sub_view(uid: int) -> tuple[str, InlineKeyboardMarkup]:
              btn("Hiddify", url=sub_server.open_url("hiddify", u["sub_token"]), icon="play")],
             [btn("QR-код", "sub:qr", icon="qr"), btn("Как подключиться", "sg", icon="help")],
             [btn("Устройства подписки", "subdev", icon="sub_devices")],
-            [btn("Перевыпустить ссылку", "sub:reissue", icon="refresh")],
+            [btn("Перевыпустить ссылку", "sub:reissue", icon="refresh"),
+             btn("Не работает VPN", "sos", icon="sos")],
             [btn("Меню", "menu", icon="back")]]
     return text, kb(*rows)
 
@@ -133,7 +134,7 @@ def guide_view(key: str) -> tuple[str, InlineKeyboardMarkup]:
 <ul>
 <li>Обнови подписку в приложении (обычно — потянуть список вниз или кнопка 🔄).</li>
 <li>Видишь сервер «Лимит устройств» — удали лишнее устройство в боте.</li>
-<li>Не помогло — напиши администратору.</li>
+<li>Не помогло — нажми <b>«Не работает VPN»</b> в боте.</li>
 </ul>
 </details>
 <footer>{em('lock')} Ссылка подписки — как пароль: не пересылай её другим людям.</footer>

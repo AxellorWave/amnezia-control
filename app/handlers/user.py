@@ -76,7 +76,8 @@ def main_menu(uid: int) -> tuple[str, InlineKeyboardMarkup]:
         if st == "running":
             rows.append([btn("Добавить устройство", "add", style="primary", icon="add")])
     rows.append([btn("Как подключиться", "help", icon="help"), btn("Статус", "status", icon="status")])
-    rows.append([btn("Написать админу", "umsg", icon="message")])
+    rows.append([btn("Не работает VPN", "sos", icon="sos"),
+                 btn("Написать админу", "umsg", icon="message")])
     if is_admin(uid):
         rows.append([btn("Админка", "adm", icon="admin")])
     return text, kb(*rows)
@@ -131,7 +132,7 @@ def device_card(d, viewer: int) -> tuple[str, InlineKeyboardMarkup]:
     return text, kb(
         [btn("Ключ для приложения", f"fmt:{i}:key", style="success", icon="key")],
         [btn("QR-код", f"fmt:{i}:qr", icon="qr"), btn("Файл .conf", f"fmt:{i}:file", icon="file")],
-        [btn("Как подключиться", "help", icon="help")],
+        [btn("Как подключиться", "help", icon="help"), btn("Не работает VPN", "sos", icon="sos")],
         [btn("Удалить", f"del:{i}", style="danger", icon="trash"), btn("Назад", "devs", icon="back")],
     )
 

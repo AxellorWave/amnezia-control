@@ -6,11 +6,11 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.types import BotCommand
 
-from . import backup, broadcast as bcast, detect, geo, sub_server, subsync
+from . import backup, broadcast as bcast, detect, geo, health, sub_server, subsync
 from .config import ADMIN_IDS, BOT_TOKEN
 from .db import touch_bot
-from .handlers import (admin, backup_admin, broadcast, protocols_admin, subscription, uninstall,
-                       user)
+from .handlers import (admin, backup_admin, broadcast, incident, protocols_admin, subscription,
+                       uninstall, user)
 from .protocols import awg, hysteria
 from .protocols.awg import server_info
 from .traffic import traffic_loop
@@ -48,6 +48,7 @@ async def main():
     bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     dp = Dispatcher()
     dp.update.outer_middleware(touch_middleware)
+    dp.update.outer_middleware(health.incident_middleware)
     dp.include_router(user.router)
     dp.include_router(subscription.router)
     dp.include_router(admin.router)
@@ -55,6 +56,7 @@ async def main():
     dp.include_router(backup_admin.router)
     dp.include_router(uninstall.router)
     dp.include_router(broadcast.router)
+    dp.include_router(incident.router)
     await bot.set_my_commands([BotCommand(command="start", description="Главное меню"),
                                BotCommand(command="help", description="Как подключиться")])
     sub_server.set_bot(bot)
@@ -76,7 +78,9 @@ async def main():
                 asyncio.create_task(detect.detect_loop()),
                 asyncio.create_task(hysteria.renew_loop()),
                 asyncio.create_task(backup.backup_loop(bot)),
-                asyncio.create_task(bcast.broadcast_loop(bot))])
+                asyncio.create_task(bcast.broadcast_loop(bot)),
+                asyncio.create_task(health.health_loop(bot)),
+                asyncio.create_task(health.incident_watch_loop(bot))])
     await dp.start_polling(bot)
 
 
