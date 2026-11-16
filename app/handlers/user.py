@@ -76,6 +76,7 @@ def main_menu(uid: int) -> tuple[str, InlineKeyboardMarkup]:
         if st == "running":
             rows.append([btn("Добавить устройство", "add", style="primary", icon="add")])
     rows.append([btn("Как подключиться", "help", icon="help"), btn("Статус", "status", icon="status")])
+    rows.append([btn("Написать админу", "umsg", icon="message")])
     if is_admin(uid):
         rows.append([btn("Админка", "adm", icon="admin")])
     return text, kb(*rows)

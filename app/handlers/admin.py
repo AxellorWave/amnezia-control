@@ -68,6 +68,9 @@ def admin_menu() -> tuple[str, InlineKeyboardMarkup]:
                      [f"{em('app')} Из приложения", f"<b>{app_n}</b>"],
                      [f"{em('online')} Сейчас в сети", f"<b>{online}</b>"]]))
     rows = [[btn("Протоколы", "proto", icon="protocols")],
+            [btn("Рассылка", "bc", icon="broadcast")]
+            + ([btn("Обновите подписку", "bc:tpl:sub", icon="subscription")]
+               if detect.sub_protocols() else []),
             [btn("Пользователи", "adm:users", icon="users"),
              btn(f"Заявки ({pending})", "adm:pending", icon="pending")],
             [btn("Из приложения", "adm:app", icon="app"), btn("Дашборд", "adm:dash", icon="status")],
@@ -151,6 +154,8 @@ def user_card(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
         rows.append([btn("Разрешить заявку снова", f"al:{chat_id}", icon="again")])
     if not is_admin(chat_id):
         rows.append([btn("Лимит устройств", f"lim:{chat_id}", icon="edit")])
+    rows.append([btn("Написать", f"msg:{chat_id}", icon="message"),
+                 btn("Переписка", f"msgh:{chat_id}", icon="history")])
     rows.append([btn("Пользователи", "adm:users", icon="back")])
     return text, kb(*rows)
 
