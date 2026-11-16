@@ -96,6 +96,10 @@ def protocols_view() -> tuple[str, InlineKeyboardMarkup]:
             rows.append([btn("Сертификат для подписок", "psc", icon="lock")])
     ts = datetime.fromtimestamp(st["ts"]).strftime("%H:%M:%S") if st.get("ts") else "—"
     text += f"<footer>{em('clock')} проверено {ts}</footer>"
+    if st.get("amnezia_xray"):
+        rows.append([btn("XRay от Amnezia", "proto:card:amnezia_xray", icon="xray")])
+    rows.append([btn("Полная копия", "bk:full", icon="backup"),
+                 btn("Восстановить из копии", "rs", icon="restore_backup")])
     rows.append([btn("Обновить", "proto:refresh", icon="refresh")])
     rows.append([btn("Админка", "adm", icon="back")])
     return text, kb(*rows)
@@ -117,12 +121,31 @@ def protocol_card(pid: str) -> tuple[str, InlineKeyboardMarkup]:
         if e.get("error"):
             text += f"<blockquote>{em('warn')} <code>{esc(e['error'])}</code></blockquote>"
     rows = []
+    if pid == "amnezia_xray":
+        return amnezia_xray_card()
+    if e:
+        rows.append([btn("Резервная копия", f"bk:{pid}", icon="backup")])
     if pid == "xray" and e:
         rows.append([btn("Обновить Xray", "pxu", icon="download")])
     if e and e["ports"] or protocol_ports(pid):
         rows.append([btn("Открыть порты в файрволе хоста", f"pfw:{pid}", icon="lock")])
     rows.append([btn("Протоколы", "proto", icon="back")])
     return text, kb(*rows)
+
+
+def amnezia_xray_card() -> tuple[str, InlineKeyboardMarkup]:
+    e = detect.get("amnezia_xray")
+    text = f"<h2>{em('xray')} XRay от Amnezia</h2>"
+    if not e:
+        return text + "<p>Не найден.</p>", kb([btn("Протоколы", "proto", icon="back")])
+    text += kv([("Состояние", state_html(e)),
+                (f"{em('server')} Контейнер", f"<code>{esc(e['container'])}</code>"),
+                ("Порты", fmt_ports(e["ports"]))])
+    text += (f"<blockquote>{em('warn')} Ботом не управляется: клиенты этого XRay выпускаются в "
+             f"приложении AmneziaVPN. Бот ставит оригинальный XTLS Xray-core — его можно "
+             f"поставить вместо этого (клиенты приложения перестанут работать).</blockquote>")
+    return text, kb([btn("Архив /opt/amnezia/xray", "bk:amnezia", icon="backup")],
+                    [btn("Протоколы", "proto", icon="back")])
 
 
 def protocol_ports(pid: str) -> list[tuple[str, int]]:
