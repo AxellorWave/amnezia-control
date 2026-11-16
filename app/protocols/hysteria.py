@@ -351,7 +351,8 @@ class Hysteria(Protocol):
         for uid, n in online.items():
             cid = chat_of(uid)
             if cid is not None and n:
-                res.setdefault(cid, {"rx": 0, "tx": 0, "online": False})["online"] = True
+                r = res.setdefault(cid, {"rx": 0, "tx": 0, "online": False})
+                r["online"], r["conns"] = True, int(n)
         return res
 
     def links(self, user, name: str = "") -> list[str]:

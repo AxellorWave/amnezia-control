@@ -350,7 +350,113 @@ def sub_status(kind: str, uid: int) -> str:
     return table(rows, head=["Подписка", "В сети", "Трафик"])
 
 
-def status_view(kind: str, uid: int) -> tuple[str, InlineKeyboardMarkup]:
+DASH_TITLES = {"awg": "AmneziaWG", "xray": "VLESS", "hy2": "Hysteria 2"}
+DASH_ICON = {"awg": "awg", "xray": "xray", "hy2": "hysteria"}
+
+
+def dash_tabs() -> list[str]:
+    """Вкладки дашборда админа — установленные протоколы."""
+    return (["awg"] if awg_state() else []) + list(detect.sub_protocols())
+
+
+def _iso_ts(s: str | None) -> int:
+    try:
+        return int(datetime.fromisoformat(s).timestamp()) if s else 0
+    except ValueError:
+        return 0
+
+
+def sub_dash_view(pid: str) -> str:
+    """Вкладка VLESS / Hysteria 2: кто сейчас подключён, сколько подключений, когда был."""
+    from ..traffic import ONLINE_CONNS, ONLINE_NOW, ONLINE_TS, proto_last_seen, proto_traffic
+    online = ONLINE_NOW.get(pid, set())
+    conns = ONLINE_CONNS.get(pid, {})
+    seen = proto_last_seen(pid)
+    col = "uuid" if pid == "xray" else "hy2_pass"
+    users = db.execute(f"SELECT chat_id, name, username FROM users WHERE status='approved' "
+                       f"AND {col} IS NOT NULL").fetchall()
+    items, never = [], 0
+    for u in users:
+        cid = u["chat_id"]
+        rx, tx = proto_traffic(cid, pid)
+        on = cid in online
+        hs = _iso_ts(seen.get(cid))
+        if not (on or hs or rx or tx):
+            never += 1
+            continue
+        who = f"@{u['username']}" if u["username"] else str(cid)
+        items.append((on, hs, f"{esc(u['name'] or 'без имени')}<br><i>{esc(who)}</i>",
+                      conns.get(cid, 0), rx, tx))
+    items.sort(key=lambda x: (-x[0], -x[1]))
+    n_on = sum(1 for x in items if x[0])
+    total = sum(x[4] + x[5] for x in items)
+    text = (f"<h2>{em(DASH_ICON[pid])} {DASH_TITLES[pid]}</h2>"
+            + kv([[f"{em('online')} в сети", f"<b>{n_on}</b>"],
+                  [f"{em('devices')} подключений", f"<b>{sum(conns.values())}</b>"],
+                  [f"{em('users')} подключались", f"<b>{len(items)}</b> из {len(users)}"],
+                  [f"{em('traffic')} трафик", f"<b>{fmt_bytes(total)}</b>"]]))
+    if items:
+        text += table([[em("online" if on else "offline"), name,
+                        str(n) if on else "—", "в сети" if on else fmt_seen(hs),
+                        f"↓ {fmt_bytes(rx)}<br>↑ {fmt_bytes(tx)}"]
+                       for on, hs, name, n, rx, tx in items[:STATUS_ROWS_MAX]],
+                      head=["", "Человек", "Подкл.", "Был", "Трафик"])
+        if len(items) > STATUS_ROWS_MAX:
+            text += f"<p><i>…и ещё {len(items) - STATUS_ROWS_MAX}</i></p>"
+    else:
+        text += "<p>Пока никто не подключался.</p>"
+    if never:
+        text += f"<p><i>Ещё {never} с доступом ни разу не подключались.</i></p>"
+    hint = ("число IP, с которых человек подключён сейчас" if pid == "xray"
+            else "число активных подключений")
+    ts = ONLINE_TS.get(pid)
+    text += (f"<p><i>«Подкл.» — {hint}. Данные снимаются раз в минуту"
+             + (f", последний раз в {datetime.fromtimestamp(ts).strftime('%H:%M:%S')}" if ts
+                else "") + ".</i></p>")
+    return text
+
+
+def tabs_row(active: str) -> list:
+    """Кнопки-вкладки с числом людей/устройств в сети."""
+    from ..traffic import ONLINE_NOW
+    row = []
+    for pid in dash_tabs():
+        if pid == "awg":
+            try:
+                stats = peer_stats()
+                n = sum(1 for st in stats.values() if is_online(st))
+            except Exception:
+                n = 0
+        else:
+            n = len(ONLINE_NOW.get(pid, set()))
+        title = DASH_TITLES[pid] + (f" · {n}" if n else "")
+        row.append(btn(title, f"adm:dash:{pid}", icon=DASH_ICON[pid],
+                       style="primary" if pid == active else None))
+    return row
+
+
+def admin_dash(tab: str = "") -> tuple[str, InlineKeyboardMarkup]:
+    """Дашборд админа с вкладками по протоколам."""
+    tabs = dash_tabs()
+    if tab not in tabs:
+        tab = tabs[0] if tabs else "awg"
+    if tab == "awg":
+        text, _ = status_view("a", 0, with_subs=False)
+        text = text.replace(f"{em('status')} Сервер</h2>", f"{em('awg')} AmneziaWG</h2>", 1)
+    else:
+        from ..traffic import account_sub_traffic
+        account_sub_traffic()
+        text = sub_dash_view(tab)
+    text += f"<footer>{em('clock')} обновлено {datetime.now().strftime('%H:%M:%S')}</footer>"
+    rows = []
+    if len(tabs) > 1:
+        rows.append(tabs_row(tab))
+    rows.append([btn("Обновить", f"adm:dash:{tab}", icon="refresh")])
+    rows.append([btn("Админка", "adm", icon="back")])
+    return text, kb(*rows)
+
+
+def status_view(kind: str, uid: int, with_subs: bool = True) -> tuple[str, InlineKeyboardMarkup]:
     stats = peer_stats()
     account_traffic(stats)
     # для устройств бота — накопленный трафик, для клиентов из приложения — счётчик awg
@@ -399,6 +505,8 @@ def status_view(kind: str, uid: int) -> tuple[str, InlineKeyboardMarkup]:
             text += f"<p><i>…и ещё {len(items) - STATUS_ROWS_MAX}</i></p>"
     elif awg_state():
         text += "<p>Устройств пока нет.</p>"
+    if not with_subs:
+        return text, None
     text += sub_status(kind, uid)
     text += f"<footer>{em('clock')} обновлено {datetime.now().strftime('%H:%M:%S')}</footer>"
     back = btn("Админка", "adm", icon="back") if kind == "a" else btn("Меню", "menu", icon="back")

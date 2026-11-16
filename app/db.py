@@ -63,6 +63,9 @@ def init_db():
                   proto TEXT, rx_total INTEGER NOT NULL DEFAULT 0,
                   tx_total INTEGER NOT NULL DEFAULT 0, rx_last INTEGER NOT NULL DEFAULT 0,
                   tx_last INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(owner_kind, owner_id, proto))""")
+    # last_seen — когда человек последний раз был в сети именно в этом протоколе
+    if "last_seen" not in [r[1] for r in db.execute("PRAGMA table_info(traffic)")]:
+        db.execute("ALTER TABLE traffic ADD COLUMN last_seen TEXT")
     db.commit()
 
 

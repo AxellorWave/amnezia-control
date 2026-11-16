@@ -19,7 +19,7 @@ from ..ui import (btn, dot, em, esc, fmt_bytes, fmt_seen, fmt_traffic, is_online
                   notify, show, table, user_line, user_table)
 from ..subsync import access_changed, sync_all
 from .subscription import user_sub_summary
-from .user import delete_device, status_view
+from .user import admin_dash, delete_device
 
 log = logging.getLogger("amnezia-bot")
 router = Router()
@@ -234,9 +234,11 @@ async def cb_app(cb: CallbackQuery):
 
 
 @router.callback_query(F.data == "adm:dash")
+@router.callback_query(F.data.startswith("adm:dash:"))
 @admin_only
 async def cb_dash(cb: CallbackQuery):
-    await show(cb, *(await asyncio.to_thread(status_view, "a", cb.from_user.id)))
+    tab = cb.data[9:] if cb.data.startswith("adm:dash:") else ""
+    await show(cb, *(await asyncio.to_thread(admin_dash, tab)))
     await cb.answer()
 
 

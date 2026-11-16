@@ -92,22 +92,47 @@ def drop_device(dev_id: int) -> None:
 
 
 ONLINE_NOW: dict[str, set[int]] = {}      # протокол -> кто онлайн по последнему опросу
+ONLINE_CONNS: dict[str, dict[int, int]] = {}   # протокол -> {chat_id: подключений}
+ONLINE_TS: dict[str, float] = {}          # протокол -> время последнего опроса
+_sub_lock = threading.Lock()
+
+
+def mark_proto_seen(proto: str, chat_ids) -> None:
+    ts = now()
+    with traffic_lock:
+        for chat_id in set(chat_ids):
+            db.execute("INSERT INTO traffic (owner_kind, owner_id, proto) VALUES ('user', ?, ?) "
+                       "ON CONFLICT DO NOTHING", (chat_id, proto))
+            db.execute("UPDATE traffic SET last_seen=? WHERE owner_kind='user' AND owner_id=? "
+                       "AND proto=?", (ts, chat_id, proto))
+        db.commit()
+
+
+def proto_last_seen(proto: str) -> dict[int, str]:
+    return {r[0]: r[1] for r in db.execute(
+        "SELECT owner_id, last_seen FROM traffic WHERE owner_kind='user' AND proto=? "
+        "AND last_seen IS NOT NULL", (proto,))}
 
 
 def account_sub_traffic() -> None:
     """Прирост трафика Xray / Hysteria2 по людям (их API отдают и сбрасывают счётчики)."""
     from .protocols import registry
-    for pid, proto in registry.SUB_PROTOCOLS.items():
-        try:
-            st = proto.stats()
-        except Exception as e:
-            log.debug("%s stats failed: %s", pid, e)
-            continue
-        add_user_traffic(pid, {cid: (v["rx"], v["tx"]) for cid, v in st.items()})
-        online = {cid for cid, v in st.items() if v.get("online")}
-        ONLINE_NOW[pid] = online
-        if online:
-            mark_online(online)
+    with _sub_lock:
+        for pid, proto in registry.SUB_PROTOCOLS.items():
+            try:
+                st = proto.stats()
+            except Exception as e:
+                log.debug("%s stats failed: %s", pid, e)
+                continue
+            add_user_traffic(pid, {cid: (v["rx"], v["tx"]) for cid, v in st.items()})
+            online = {cid for cid, v in st.items() if v.get("online")}
+            ONLINE_NOW[pid] = online
+            ONLINE_CONNS[pid] = {cid: int(v.get("conns") or 1) for cid, v in st.items()
+                                 if v.get("online")}
+            ONLINE_TS[pid] = time.time()
+            if online:
+                mark_online(online)
+                mark_proto_seen(pid, online)
 
 
 def online_users() -> set[int]:

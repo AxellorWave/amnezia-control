@@ -214,6 +214,16 @@ def wait_started(timeout: float = 20) -> None:
     raise RuntimeError(f"Xray не запустился:\n{logs.strip()[-1200:]}")
 
 
+def online_ip_count(user_email: str) -> int:
+    """С скольких IP человек сейчас подключён (xray api statsonlineiplist); 1 — если не узнать."""
+    try:
+        data = json.loads(api("statsonlineiplist", "-email", user_email, timeout=10) or "{}")
+        return max(1, len(data.get("ips") or {}))
+    except Exception as e:
+        log.debug("xray online ips %s: %s", user_email, e)
+        return 1
+
+
 def api(*args: str, timeout: float = 20) -> str:
     """xray api <cmd> внутри контейнера (API слушает 127.0.0.1 в сети хоста)."""
     cmd, rest = args[0], args[1:]
@@ -403,7 +413,8 @@ class Xray(Protocol):
             for name in online.get("users") or []:
                 cid = chat_of(name.split(">>>")[1] if ">>>" in name else name)
                 if cid is not None:
-                    res.setdefault(cid, {"rx": 0, "tx": 0, "online": False})["online"] = True
+                    r = res.setdefault(cid, {"rx": 0, "tx": 0, "online": False})
+                    r["online"], r["conns"] = True, online_ip_count(email(cid))
         except Exception as e:
             log.debug("xray online: %s", e)
         return res
