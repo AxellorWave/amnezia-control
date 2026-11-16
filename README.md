@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛡 amnezia-bot
+# 🛡 amnezia-control
 
 **Telegram-бот, который сам ставит VPN на сервер и раздаёт доступ:<br>AmneziaWG 2.0 · VLESS (XTLS Xray-core) · Hysteria 2**
 
