@@ -7,7 +7,7 @@ from datetime import datetime
 from aiogram import Bot, F, Router
 from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardMarkup
 
-from .. import detect, sub_server
+from .. import detect, guides, sub_server
 from ..access import device_limit, has_access
 from ..db import db, devices_count, ensure_creds, get_user, sub_devices
 from ..protocols.awg import qr_png
@@ -20,22 +20,6 @@ log = logging.getLogger("amnezia-bot")
 router = Router()
 
 PROTO_ICON = {"xray": "xray", "hy2": "hysteria"}
-GUIDES = {
-    "happ": ("Happ", "https://www.happ.su/main",
-             "iPhone и iPad, Android, Windows, macOS",
-             "Открой Happ → нажми <b>➕</b> → <b>«Вставить из буфера»</b> (ссылка подписки "
-             "должна быть скопирована) или просто нажми кнопку <b>«Открыть в Happ»</b> в боте."),
-    "v2raytun": ("v2RayTun", "https://v2raytun.com",
-                 "iPhone и iPad, Android, Windows, macOS",
-                 "Открой v2RayTun → <b>➕</b> → <b>«Импорт из буфера»</b> или нажми кнопку "
-                 "<b>«Открыть в v2RayTun»</b> в боте."),
-    "hiddify": ("Hiddify", "https://hiddify.com",
-                "Android, iPhone, Windows, macOS, Linux",
-                "Открой Hiddify → <b>«Новый профиль»</b> → <b>«Добавить из буфера обмена»</b> или "
-                "нажми <b>«Открыть в Hiddify»</b> в боте."),
-}
-
-
 def fmt_dt(s: str | None) -> str:
     if not s:
         return "—"
@@ -73,10 +57,14 @@ def sub_view(uid: int) -> tuple[str, InlineKeyboardMarkup]:
             + table(rows_t, head=["Протокол", "Состояние", "Трафик"])
             + kv([(f"{em('devices')} Устройств", f"<b>{n}</b>" + ("" if lim is None else f" из {lim}"))])
             + f"<footer>{em('lock')} Ссылка — как пароль: не пересылай её другим людям.</footer>")
-    rows = [[btn("Открыть в Happ", url=sub_server.open_url("happ", u["sub_token"]), icon="play")],
-            [btn("v2RayTun", url=sub_server.open_url("v2raytun", u["sub_token"]), icon="play"),
-             btn("Hiddify", url=sub_server.open_url("hiddify", u["sub_token"]), icon="play")],
+    t = u["sub_token"]
+    rows = [[btn("Открыть в Happ", url=sub_server.open_url("happ", t), icon="play"),
+             btn("Открыть в Incy", url=sub_server.open_url("incy", t), icon="play")],
+            [btn("v2RayTun", url=sub_server.open_url("v2raytun", t), icon="play"),
+             btn("Hiddify", url=sub_server.open_url("hiddify", t), icon="play")],
             [btn("QR-код", "sub:qr", icon="qr"), btn("Как подключиться", "sg", icon="help")],
+            [btn("Раздельное туннелирование", "sgs", icon="ip_change"),
+             btn("Списки сервисов", "routes", icon="globe")],
             [btn("Устройства подписки", "subdev", icon="sub_devices")],
             [btn("Перевыпустить ссылку", "sub:reissue", icon="refresh"),
              btn("Не работает VPN", "sos", icon="sos")],
@@ -108,39 +96,11 @@ def devices_view(uid: int) -> tuple[str, InlineKeyboardMarkup]:
 
 
 def guides_view() -> tuple[str, InlineKeyboardMarkup]:
-    text = (f"<h2>{em('help')} Как подключиться по подписке</h2>"
-            f"<p>Подойдёт любое из приложений — выбери, покажу шаги.</p>"
-            + table([[name, esc(where)] for name, _, where, _ in GUIDES.values()],
-                    head=["Приложение", "Устройства"]))
-    return text, kb([btn(GUIDES[k][0], f"sg:{k}", icon="help") for k in GUIDES],
-                    [btn("Моя подписка", "sub", icon="back")])
+    return guides.sub_index()
 
 
 def guide_view(key: str) -> tuple[str, InlineKeyboardMarkup]:
-    name, site, where, steps = GUIDES[key]
-    text = f"""
-<h2>{em('help')} {name}</h2>
-<p>Работает на: {esc(where)}.</p>
-<h3>1. Установи приложение</h3>
-<p>Кнопка <b>«Сайт {name}»</b> ниже — там ссылки на App Store, Google Play и версии для компьютера.</p>
-<h3>2. Скопируй ссылку подписки</h3>
-<p>В боте: <b>Моя подписка</b> → нажми на ссылку, она скопируется.</p>
-<h3>3. Добавь подписку</h3>
-<p>{steps}</p>
-<h3>4. Подключись</h3>
-<p>Выбери сервер (VLESS или Hysteria2) и нажми кнопку подключения. Если один не работает — попробуй другой.</p>
-<details>
-<summary>{em('question')} Не получается?</summary>
-<ul>
-<li>Обнови подписку в приложении (обычно — потянуть список вниз или кнопка 🔄).</li>
-<li>Видишь сервер «Лимит устройств» — удали лишнее устройство в боте.</li>
-<li>Не помогло — нажми <b>«Не работает VPN»</b> в боте.</li>
-</ul>
-</details>
-<footer>{em('lock')} Ссылка подписки — как пароль: не пересылай её другим людям.</footer>
-"""
-    return text, kb([btn(f"Сайт {name}", url=site, icon="download")],
-                    [btn("Моя подписка", "sub", icon="subscription"), btn("Назад", "sg", icon="back")])
+    return guides.sub_guide(key)
 
 
 def allowed(uid: int) -> bool:
@@ -226,9 +186,40 @@ async def cb_guides(cb: CallbackQuery):
 @router.callback_query(F.data.startswith("sg:"))
 async def cb_guide(cb: CallbackQuery):
     key = cb.data[3:]
-    if key not in GUIDES:
+    if key not in guides.SUB_CLIENTS:
         return await cb.answer()
     await show(cb, *guide_view(key))
+    await cb.answer()
+
+
+@router.callback_query(F.data == "sgs")
+async def cb_split_index(cb: CallbackQuery):
+    await show(cb, *guides.sub_split_index())
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("sgs:"))
+async def cb_split(cb: CallbackQuery):
+    key = cb.data[4:]
+    if key not in guides.SUB_CLIENTS:
+        return await cb.answer()
+    await show(cb, *guides.sub_split(key))
+    await cb.answer()
+
+
+# раздельное туннелирование для AmneziaWG (AmneziaVPN, DefaultVPN, AmneziaWG .conf)
+@router.callback_query(F.data == "gs")
+async def cb_awg_split_index(cb: CallbackQuery):
+    await show(cb, *guides.awg_split_index())
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("gs:"))
+async def cb_awg_split(cb: CallbackQuery):
+    key = cb.data[3:]
+    if key not in guides.AWG_SPLIT_KEYS:
+        return await cb.answer()
+    await show(cb, *guides.awg_split(key))
     await cb.answer()
 
 

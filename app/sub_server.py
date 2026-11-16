@@ -33,6 +33,7 @@ APPS = {
     "happ": ("Happ", "happ://add/{url}"),
     "v2raytun": ("v2RayTun", "v2raytun://import/{url}"),
     "hiddify": ("Hiddify", "hiddify://import/{url}#{name}"),
+    "incy": ("Incy", "incy://add/{url}"),            # docs.incy.cc/en/deep-links
 }
 
 
@@ -200,7 +201,33 @@ async def sub_handler(request: web.Request) -> web.Response:
         "content-disposition": f'attachment; filename="{SERVER_NAME}"',
         "Cache-Control": "no-store",
     }
+    rh = await asyncio.to_thread(routing_header, u["chat_id"], dev["app"])
+    if rh:
+        headers["routing"] = rh
     return web.Response(text=body, headers=headers, content_type="text/plain")
+
+
+ROUTING_HEADER_MAX = 6000
+
+
+def routing_header(chat_id: int, app: str) -> str:
+    """Happ / Incy подхватывают профиль маршрутизации из заголовка routing подписки —
+    так выбранные человеком списки сервисов приезжают сами. Большие профили не шлём."""
+    scheme = "happ" if app.lower().startswith("happ") else \
+        "incy" if app.lower().startswith("incy") else ""
+    if not scheme:
+        return ""
+    try:
+        from . import routes
+        prefs = routes.get_prefs(chat_id)
+        if not prefs["services"]:
+            return ""
+        prof = routes.happ_profile(routes.collect(prefs["services"]), prefs["mode"], SERVER_NAME)
+        link = routes.happ_link(prof, scheme)
+    except Exception as e:
+        log.debug("routing header: %s", e)
+        return ""
+    return link if len(link) <= ROUTING_HEADER_MAX else ""
 
 
 async def open_handler(request: web.Request) -> web.Response:
@@ -223,6 +250,34 @@ async def open_handler(request: web.Request) -> web.Response:
     return web.Response(text=page, content_type="text/html")
 
 
+async def routing_handler(request: web.Request) -> web.Response:
+    """Страница-переход на happ://routing/onadd/… или incy://routing/onadd/… с профилем
+    раздельного туннелирования, собранным по выбору человека в «Списках сервисов»."""
+    if not rate_ok(client_ip(request)):
+        return web.Response(status=429, text="Too Many Requests")
+    client = request.match_info["app"]
+    u = await asyncio.to_thread(user_by_token, request.match_info["token"])
+    if client not in ("happ", "incy") or not u:
+        return web.Response(status=404, text="Not Found")
+    from . import routes
+
+    def build() -> str:
+        p = routes.get_prefs(u["chat_id"])
+        return routes.happ_link(routes.happ_profile(routes.collect(p["services"]), p["mode"]),
+                                client)
+
+    target = await asyncio.to_thread(build)
+    title = "Happ" if client == "happ" else "Incy"
+    t = html.escape(target, quote=True)
+    page = (f"<!doctype html><html lang=ru><head><meta charset=utf-8>"
+            f"<meta name=viewport content='width=device-width,initial-scale=1'>"
+            f"<meta http-equiv=refresh content='0;url={t}'><title>{title}</title>"
+            f"</head><body style='font-family:sans-serif;padding:24px'>"
+            f"<p>Добавляю маршрутизацию в {title}…</p><p><a href='{t}'>Нажми, если приложение "
+            f"не открылось</a></p></body></html>")
+    return web.Response(text=page, content_type="text/html", headers={"Cache-Control": "no-store"})
+
+
 async def index(request: web.Request) -> web.Response:
     return web.Response(text="OK", content_type="text/plain")
 
@@ -231,6 +286,7 @@ def public_app() -> web.Application:
     app = web.Application()
     app.router.add_get("/sub/{token}", sub_handler)
     app.router.add_get("/open/{app}/{token}", open_handler)
+    app.router.add_get("/routing/{app}/{token}", routing_handler)
     app.router.add_get("/", index)
     return app
 

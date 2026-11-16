@@ -6,11 +6,12 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.types import BotCommand
 
-from . import backup, broadcast as bcast, detect, geo, health, sub_server, subsync
+from . import backup, broadcast as bcast, detect, geo, health, routes, sub_server, subsync
 from .config import ADMIN_IDS, BOT_TOKEN
 from .db import touch_bot
 from .handlers import (admin, backup_admin, broadcast, incident, protocols_admin, subscription,
                        uninstall, user)
+from .handlers import routes as routes_h
 from .protocols import awg, hysteria
 from .protocols.awg import server_info
 from .traffic import traffic_loop
@@ -57,6 +58,7 @@ async def main():
     dp.include_router(uninstall.router)
     dp.include_router(broadcast.router)
     dp.include_router(incident.router)
+    dp.include_router(routes_h.router)
     await bot.set_my_commands([BotCommand(command="start", description="Главное меню"),
                                BotCommand(command="help", description="Как подключиться")])
     sub_server.set_bot(bot)
@@ -80,7 +82,8 @@ async def main():
                 asyncio.create_task(backup.backup_loop(bot)),
                 asyncio.create_task(bcast.broadcast_loop(bot)),
                 asyncio.create_task(health.health_loop(bot)),
-                asyncio.create_task(health.incident_watch_loop(bot))])
+                asyncio.create_task(health.incident_watch_loop(bot)),
+                asyncio.create_task(routes.routes_loop())])
     await dp.start_polling(bot)
 
 

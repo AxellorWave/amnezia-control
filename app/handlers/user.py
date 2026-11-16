@@ -76,6 +76,7 @@ def main_menu(uid: int) -> tuple[str, InlineKeyboardMarkup]:
         if st == "running":
             rows.append([btn("Добавить устройство", "add", style="primary", icon="add")])
     rows.append([btn("Как подключиться", "help", icon="help"), btn("Статус", "status", icon="status")])
+    rows.append([btn("Списки сервисов", "routes", icon="globe")])
     rows.append([btn("Не работает VPN", "sos", icon="sos"),
                  btn("Написать админу", "umsg", icon="message")])
     if is_admin(uid):
@@ -149,13 +150,18 @@ def help_menu() -> tuple[str, InlineKeyboardMarkup]:
     rows_sub = []
     if detect.sub_protocols():
         text += (f"<blockquote>{em('subscription')} Есть и <b>подписка</b> (VLESS, Hysteria2) — "
-                 f"одна ссылка для Happ, v2RayTun или Hiddify на всех устройствах.</blockquote>")
-        rows_sub = [btn("Подписка: Happ, v2RayTun, Hiddify", "sg", icon="subscription")]
+                 f"одна ссылка для Happ, Incy, v2RayTun или Hiddify на всех устройствах."
+                 f"</blockquote>")
+        rows_sub = [btn("Подписка: Happ, Incy, v2RayTun, Hiddify", "sg", icon="subscription")]
+    text += (f"<p>{em('ip_change')} <b>Раздельное туннелирование</b> — через VPN только нужные "
+             f"сервисы, остальное напрямую.</p>")
     return text, kb(rows_sub, [btn("Android", "guide:android", icon="android"),
                      btn("iPhone", "guide:ios", icon="apple")],
                     [btn("Windows", "guide:windows", icon="windows"),
                      btn("macOS", "guide:mac", icon="apple"),
                      btn("Linux", "guide:linux", icon="linux")],
+                    [btn("Раздельное туннелирование", "gs", icon="ip_change")]
+                    + ([btn("Подписка", "sgs", icon="ip_change")] if rows_sub else []),
                     [btn("Меню", "menu", icon="back")])
 
 
@@ -187,6 +193,7 @@ def guide_android() -> str:
 </ul>
 </details>
 
+<p>{em('ip_change')} Через VPN можно пустить только нужные приложения или сайты — кнопка <b>«Раздельное туннелирование»</b> ниже.</p>
 <footer>{em('lock')} Ключ — как пароль: не пересылай его другим людям.</footer>
 """
 
@@ -218,6 +225,8 @@ def guide_ios() -> str:
 <li>Не подключается — напиши администратору, он проверит сервер.</li>
 </ul>
 </details>
+
+<p>{em('ip_change')} На iPhone раздельное туннелирование возможно только по сайтам и IP, не по приложениям — подробнее по кнопке ниже.</p>
 
 <footer>{em('lock')} Ключ — как пароль: не пересылай его другим людям.</footer>
 """
@@ -287,6 +296,8 @@ def guide_desktop(os_name: str) -> str:
 <li>Не подключается — напиши администратору, он проверит сервер.</li>
 </ul>
 </details>
+
+<p>{em('ip_change')} Через VPN можно пустить только нужные сайты (и на Windows — исключить программы) — кнопка <b>«Раздельное туннелирование»</b> ниже.</p>
 
 <footer>{em('lock')} Ключ — как пароль: не пересылай его другим людям.</footer>
 """
@@ -634,14 +645,18 @@ async def cb_guide(cb: CallbackQuery):
     os_name = cb.data.split(":", 1)[1]
     if os_name == "android":
         guide, store = guide_android(), [btn("Google Play", url=ANDROID_URL, icon="download")]
+        split = "gs:amnezia_apps"
     elif os_name in DESKTOP:
         guide = guide_desktop(os_name)
         store = [btn("Скачать", url=DESKTOP_URL, icon="download"),
                  btn("Сайт Amnezia", url=DESKTOP_SITE_URL, icon="globe")]
+        split = "gs:amnezia"
     else:
         guide, store = guide_ios(), [btn("App Store", url=IOS_URL, icon="download")]
-    await show(cb, guide, kb(store, [btn("Мои устройства", "devs", icon="devices"),
-                                       btn("Назад", "help", icon="back")]))
+        split = "gs:defaultvpn"
+    await show(cb, guide, kb(store, [btn("Раздельное туннелирование", split, icon="ip_change")],
+                             [btn("Мои устройства", "devs", icon="devices"),
+                              btn("Назад", "help", icon="back")]))
 
 
 @router.callback_query(F.data == "status")
