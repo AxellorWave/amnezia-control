@@ -30,8 +30,8 @@ _runners: list[web.AppRunner] = []
 # схемы приложений для кнопок «Открыть в …» (Telegram не пускает такие схемы в кнопки
 # напрямую, поэтому кнопка ведёт на /open/<app>/<token>, а страница перенаправляет)
 APPS = {
-    "happ": ("Happ", "happ://add/{raw}"),             # Happ не раскодирует %-escape в адресе
-    "v2raytun": ("v2RayTun", "v2raytun://import/{url}"),
+    "happ": ("Happ", "happ://add/{raw}"),             # Happ и v2RayTun не раскодируют %-escape
+    "v2raytun": ("v2RayTun", "v2raytun://import/{raw}"),
     "hiddify": ("Hiddify", "hiddify://import/{url}#{name}"),
     "incy": ("Incy", "incy://add/{url}"),            # docs.incy.cc/en/deep-links
 }
