@@ -273,7 +273,7 @@ SERVICES: dict[str, dict] = {
         "ozon.ru", "ozone.ru", "wildberries.ru", "wb.ru", "wbstatic.net", "avito.ru",
         "avito.st", "megamarket.ru", "lamoda.ru"], "sources": []},
     "ru_all": {"title": "Все сайты .ru / .рф / .su", "domains": ["ru", "xn--p1ai", "su"],
-               "suffix_only": True,
+               "suffix_only": True, "geoip": "ru", "geosite": "category-ru",
                "sources": [("cidr", "https://www.ipdeny.com/ipblocks/data/aggregated/"
                                     "ru-aggregated.zone")]},
 }
@@ -768,19 +768,42 @@ def set_mode(chat_id: int, mode: str) -> dict:
 # ================================================================ сборка ===
 
 def collect(services) -> dict:
-    """Объединённые домены, домены-суффиксы (зоны), подсети и IP доменов."""
-    domains, zones, cidrs, resolved = [], [], [], []
+    """Объединённые домены, домены-суффиксы (зоны), подсети и IP доменов.
+
+    geoip / geosite — готовые категории из гео-баз клиента (Happ, Xray): ими можно
+    заменить огромные списки (все подсети РФ); cidrs_nogeo — подсети без таких сервисов."""
+    domains, zones, cidrs, resolved, nogeo, geoip, geosite = [], [], [], [], [], [], []
     for key in services:
         e = get_service(key)
-        if SERVICES[key].get("suffix_only"):
+        svc = SERVICES[key]
+        if svc.get("suffix_only"):
             zones += e["domains"]
         else:
             domains += e["domains"]
         cidrs += e["cidrs"]
+        if svc.get("geoip"):
+            geoip.append(svc["geoip"])
+            geosite.append(svc["geosite"])
+        else:
+            nogeo += e["cidrs"]
         resolved += e.get("resolved", [])
     return {"domains": list(dict.fromkeys(domains)), "zones": list(dict.fromkeys(zones)),
             "cidrs": [str(n) for n in collapse(cidrs)],
-            "resolved": [str(n) for n in collapse(resolved)]}
+            "resolved": [str(n) for n in collapse(resolved)],
+            "cidrs_nogeo": [str(n) for n in collapse(nogeo)],
+            "geoip": list(dict.fromkeys(geoip)), "geosite": list(dict.fromkeys(geosite))}
+
+
+def compact_domains(domains) -> list[str]:
+    """Убрать поддомены, которые уже покрыты родительским доменом из того же списка
+    (правило domain: в Xray/Happ/sing-box совпадает и с поддоменами)."""
+    have = set(domains)
+    out = []
+    for d in domains:
+        parts = d.split(".")
+        if not any(".".join(parts[i:]) in have for i in range(1, len(parts) - 1)):
+            out.append(d)
+    return out
 
 
 def amnezia_json(data: dict) -> str:
@@ -825,11 +848,23 @@ def xray_domain_rules(data: dict) -> list[str]:
     return [f"domain:{d}" for d in data["domains"]] + [f"domain:{z}" for z in data["zones"]]
 
 
+HAPP_MAX_IPS = 400        # профиль уходит в deep link — длинные ссылки приложения не открывают
+
+
 def happ_profile(data: dict, mode: str, name: str = "VPN") -> dict:
-    """Профиль маршрутизации Happ / Incy (https://www.happ.su/main/dev-docs/routing)."""
+    """Профиль маршрутизации Happ / Incy (https://www.happ.su/main/dev-docs/routing).
+
+    Профиль передаётся base64 прямо в ссылке, поэтому он сжат: поддомены свёрнуты в
+    родительские домены, подсети РФ заменены на geoip:ru / geosite:category-ru из гео-баз
+    приложения, остальные подсети укрупнены до HAPP_MAX_IPS маршрутов."""
     private = list(PRIVATE_V4)
-    sites = xray_domain_rules(data)
-    ips = data["cidrs"]
+    sites = ([f"domain:{d}" for d in compact_domains(data["domains"])]
+             + [f"domain:{z}" for z in data["zones"]]
+             + [f"geosite:{g}" for g in data.get("geosite", [])])
+    nets = data.get("cidrs_nogeo", data["cidrs"])
+    v4 = [str(n) for n in aggregate_v4(nets, HAPP_MAX_IPS)]
+    v6 = [str(n) for n in collapse(nets) if n.version == 6][:50]
+    ips = v4 + v6 + [f"geoip:{g}" for g in data.get("geoip", [])]
     prof = {
         "Name": name,
         "GlobalProxy": "true" if mode == "exclude" else "false",

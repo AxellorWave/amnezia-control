@@ -12,7 +12,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from .. import detect
 from ..access import is_admin
 from ..config import MAX_DEVICES, VPN_HOST
-from ..db import bot_pubs, db, devices_count, get_user, set_user, user_devices
+from ..db import bot_pubs, db, devices_count, get_user, set_user, sub_devices, user_devices
 from ..protocols.awg import peer_stats, remove_peer, server_info, server_peers, wg_lock
 from ..traffic import account_traffic, user_traffic
 from ..ui import (btn, dot, em, esc, fmt_bytes, fmt_seen, fmt_traffic, is_online, kb, kv,
@@ -70,9 +70,7 @@ def admin_menu() -> tuple[str, InlineKeyboardMarkup]:
     rows = [[btn("Протоколы", "proto", icon="protocols"),
              btn("Мониторинг", "inc:status", icon="health_ok")],
             [btn("Блокировка IP", "blk", icon="health_bad"),
-             btn("Рассылка", "bc", icon="broadcast")]
-            + ([btn("Обновите подписку", "bc:tpl:sub", icon="subscription")]
-               if detect.sub_protocols() else []),
+             btn("Рассылка", "bc", icon="broadcast")],
             [btn("Пользователи", "adm:users", icon="users"),
              btn(f"Заявки ({pending})", "adm:pending", icon="pending")],
             [btn("Из приложения", "adm:app", icon="app"), btn("Дашборд", "adm:dash", icon="status")],
@@ -142,10 +140,17 @@ def user_card(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
                         fmt_seen(stats[d["pub"]]["hs"] if d["pub"] in stats else 0),
                         fmt_bytes(d["rx_total"] + d["tx_total"])] for d in devs],
                       head=["", "Устройство", "IP", "Подключение", "Трафик"],
-                      caption=f"Устройства ({len(devs)})")
+                      caption=f"Устройства AmneziaWG ({len(devs)})")
         for d in devs:
             rows.append([btn(d["name"], f"del:{d['id']}", icon="trash")])
-    else:
+    sdevs = sub_devices(chat_id)
+    if sdevs:
+        from .subscription import fmt_dt
+        text += table([[esc(d["model"] or d["os"] or "устройство"), esc(d["os"] or "—"),
+                        esc(d["app"] or "—"), fmt_dt(d["last_seen"])] for d in sdevs],
+                      head=["Устройство", "ОС", "Приложение", "Обновлял"],
+                      caption=f"Устройства подписки ({len(sdevs)})")
+    if not devs and not sdevs:
         text += "<p>Устройств нет.</p>"
     if s == "pending":
         rows.append([btn("Одобрить", f"ok:{chat_id}", style="success", icon="ok"),
@@ -257,8 +262,8 @@ async def notify_approved(bot: Bot, chat_id: int) -> bool:
     if detect.sub_protocols():
         rows.append([btn("Моя подписка", "sub", style="primary", icon="subscription")])
     if detect.running("awg"):
-        rows.append([btn("Добавить устройство", "add", style=None if rows else "primary",
-                         icon="add")])
+        rows.append([btn("Добавить устройство AmneziaWG", "add",
+                         style=None if rows else "primary", icon="add")])
     rows.append([btn("Как подключиться", "help", icon="help")])
     first = ("Возьми ссылку-подписку или добавь первое устройство"
              if len(rows) > 2 else "Добавь своё первое устройство" if detect.running("awg")

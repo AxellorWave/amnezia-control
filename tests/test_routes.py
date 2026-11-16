@@ -159,3 +159,16 @@ def test_every_topic_service_exists():
     for _, _, keys in routes.TOPICS:
         for k in keys:
             assert routes.SERVICES[k]["title"]
+
+
+def test_compact_domains_and_small_happ_profile():
+    assert routes.compact_domains(["a.com", "x.a.com", "y.x.a.com", "b.org", "a.com.evil.net"]) \
+        == ["a.com", "b.org", "a.com.evil.net"]
+    data = {"domains": ["yt.com"] + [f"s{i}.yt.com" for i in range(3000)], "zones": ["ru"],
+            "cidrs": [], "resolved": [], "geoip": ["ru"], "geosite": ["category-ru"],
+            "cidrs_nogeo": [f"10.{i // 256}.{i % 256}.0/24" for i in range(5000)]}
+    prof = routes.happ_profile(data, "exclude")
+    assert prof["DirectSites"] == ["domain:yt.com", "domain:ru", "geosite:category-ru"]
+    assert "geoip:ru" in prof["DirectIp"]
+    assert len(prof["DirectIp"]) <= routes.HAPP_MAX_IPS + len(routes.PRIVATE_V4) + 1
+    assert len(routes.happ_link(prof)) < 20000

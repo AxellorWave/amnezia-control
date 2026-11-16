@@ -206,3 +206,15 @@ def test_subscription_response():
     assert resp.headers["subscription-userinfo"].startswith("upload=")
     bad = make_mocked_request("GET", "/sub/" + "x" * 40, match_info={"token": "x" * 40})
     assert asyncio.run(sub_server.sub_handler(bad)).status == 404
+
+
+def test_block_ru_off_by_default_and_xray_runs_as_root(monkeypatch):
+    cfg = xray.build_config({k: v for k, v in _xs().items() if k != "block_ru"}, USERS)
+    assert "geoip:ru" not in json.dumps(cfg["routing"])
+    assert "acl" not in hysteria.build_config({k: v for k, v in _hs().items() if k != "block_ru"})
+    calls = []
+    monkeypatch.setattr(xray, "docker", lambda *a, **kw: calls.append(a))
+    monkeypatch.setattr(xray.docker_util, "remove", lambda name: None)
+    monkeypatch.setattr(xray, "host_dir", lambda: "/data/xray")
+    xray.run_container({"image": "img"})
+    assert "--user" in calls[0] and calls[0][calls[0].index("--user") + 1] == "0:0"

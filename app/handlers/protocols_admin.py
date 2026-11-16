@@ -49,8 +49,14 @@ def clients_count(pid: str) -> str:
             col = "uuid" if pid == "xray" else "hy2_pass"
             cols = [r[1] for r in db.execute("PRAGMA table_info(users)")]
             if col in cols:
-                return str(db.execute(f"SELECT COUNT(*) FROM users WHERE status='approved' "
-                                      f"AND {col} IS NOT NULL").fetchone()[0])
+                # «Клиенты» — кто хоть раз подключался (был трафик), доступ есть у всех одобренных
+                used = db.execute("SELECT COUNT(*) FROM traffic t JOIN users u "
+                                  "ON u.chat_id=t.owner_id WHERE t.owner_kind='user' "
+                                  "AND t.proto=? AND t.rx_total+t.tx_total>0 "
+                                  "AND u.status='approved'", (pid,)).fetchone()[0]
+                total = db.execute(f"SELECT COUNT(*) FROM users WHERE status='approved' "
+                                   f"AND {col} IS NOT NULL").fetchone()[0]
+                return f"{used} подключались · доступ у {total}"
     except Exception as e:
         log.debug("clients count %s: %s", pid, e)
     return "—"
@@ -127,6 +133,12 @@ def protocol_card(pid: str) -> tuple[str, InlineKeyboardMarkup]:
         rows.append([btn("Резервная копия", f"bk:{pid}", icon="backup")])
     if pid == "xray" and e:
         rows.append([btn("Обновить Xray", "pxu", icon="download")])
+    if e and pid in ("xray", "hy2"):
+        on = bool((PROTO_OBJ[pid].settings() or {}).get("block_ru"))
+        text += kv([("Блок RU", "включён — российские сайты через этот протокол не открываются"
+                     if on else "выключен")])
+        rows.append([btn("Выключить блок RU" if on else "Включить блок RU", f"pbr:{pid}",
+                         icon="globe")])
     if e and e["ports"] or protocol_ports(pid):
         rows.append([btn("Открыть порты в файрволе хоста", f"pfw:{pid}", icon="lock")])
     if e:
@@ -210,7 +222,8 @@ WIZARDS: dict[str, dict] = {
         "hint": ("Цель REALITY (SNI) — чужой сайт, под который маскируется сервер. Нужны TLS 1.3 "
                  "и h2. Лучше сайт в той же сети или дата-центре, что и VPS, а не крупные вроде "
                  "microsoft.com или google.com. «Блок RU» — запрет выхода через VPN на российские "
-                 "домены и IP: так сервер не светится в российских сервисах и не мешает им."),
+                 "домены и IP: сервер не светится в российских сервисах, но у клиентов без "
+                 "маршрутизации (RU — напрямую) российские сайты перестанут открываться."),
         "fields": [
             {"key": "port", "label": "Порт VLESS", "kind": "port", "proto": "tcp", "default": 443},
             {"key": "sni", "label": "Цель REALITY (SNI)", "kind": "text", "default": "",
@@ -219,7 +232,7 @@ WIZARDS: dict[str, dict] = {
             {"key": "xhttp", "label": "Запасной вход XHTTP", "kind": "bool", "default": True},
             {"key": "xhttp_port", "label": "Порт XHTTP", "kind": "port", "proto": "tcp",
              "default": 8443, "when": "xhttp"},
-            {"key": "block_ru", "label": "Блок RU-доменов и IP", "kind": "bool", "default": True},
+            {"key": "block_ru", "label": "Блок RU-доменов и IP", "kind": "bool", "default": False},
         ],
         "precheck": lambda p: xray_precheck(p),
     },
@@ -237,7 +250,7 @@ WIZARDS: dict[str, dict] = {
             {"key": "cert", "label": "Сертификат", "kind": "choice", "default": "self",
              "choices": [("self", "самоподписанный"), ("domain", "Let's Encrypt по домену")]},
             {"key": "obfs", "label": "Обфускация Salamander", "kind": "bool", "default": True},
-            {"key": "block_ru", "label": "Блок RU-доменов и IP", "kind": "bool", "default": True},
+            {"key": "block_ru", "label": "Блок RU-доменов и IP", "kind": "bool", "default": False},
         ],
         "precheck": lambda p: hy2_precheck(p),
     },
@@ -543,6 +556,26 @@ async def cb_open_firewall_ok(cb: CallbackQuery):
 
 
 # ============================================================ обновление Xray ===
+
+PROTO_OBJ = {"xray": XRAY, "hy2": HY2}
+
+
+@router.callback_query(F.data.startswith("pbr:"))
+@admin_only
+async def cb_block_ru(cb: CallbackQuery):
+    pid = cb.data[4:]
+    proto = PROTO_OBJ.get(pid)
+    if not proto or not proto.settings():
+        return await cb.answer("Протокол не установлен", show_alert=True)
+    on = not bool(proto.settings().get("block_ru"))
+    await cb.answer("Применяю…")
+    try:
+        await asyncio.to_thread(proto.set_block_ru, on)
+    except Exception as e:
+        return await cb.answer(f"Не получилось: {e}"[:190], show_alert=True)
+    await asyncio.to_thread(detect.refresh)
+    await show(cb, *protocol_card(pid))
+
 
 @router.callback_query(F.data == "pxu")
 @admin_only

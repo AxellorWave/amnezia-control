@@ -9,7 +9,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardMarkup
 
 from .. import detect, guides, sub_server
 from ..access import device_limit, has_access
-from ..db import db, devices_count, ensure_creds, get_user, sub_devices
+from ..db import db, ensure_creds, get_user, sub_devices
 from ..protocols.awg import qr_png
 from ..protocols.registry import SUB_PROTOCOLS, TITLES
 from ..subsync import reissue
@@ -49,13 +49,15 @@ def sub_view(uid: int) -> tuple[str, InlineKeyboardMarkup]:
         rows_t.append([f"{em(PROTO_ICON[pid])} {TITLES[pid]}", st + on,
                        fmt_traffic(rx, tx) if rx or tx else "—"])
     lim = device_limit(uid)
-    n = devices_count(uid)
+    n = len(sub_devices(uid))
     text = (f"<h2>{em('subscription')} Моя подписка</h2>"
             f"<p>Одна ссылка на все устройства: добавь её в приложение — серверы обновятся "
             f"сами. Нажми на ссылку, чтобы скопировать.</p>"
             f"<pre>{esc(url)}</pre>"
             + table(rows_t, head=["Протокол", "Состояние", "Трафик"])
-            + kv([(f"{em('devices')} Устройств", f"<b>{n}</b>" + ("" if lim is None else f" из {lim}"))])
+            + kv([(f"{em('sub_devices')} Устройств подписки", f"<b>{n}</b>"
+                   + ("" if lim is None else
+                      f" <i>(общий лимит {lim} — вместе с устройствами AmneziaWG)</i>"))])
             + f"<footer>{em('lock')} Ссылка — как пароль: не пересылай её другим людям.</footer>")
     t = u["sub_token"]
     rows = [[btn("Открыть в Happ", url=sub_server.open_url("happ", t), icon="play"),

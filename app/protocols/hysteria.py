@@ -253,7 +253,7 @@ class Hysteria(Protocol):
              "obfs_password": secrets.token_urlsafe(18), "stats_secret": secrets.token_urlsafe(24),
              "stats_port": STATS_PORT, "auth_port": HY2_AUTH_PORT,
              "self_signed": params.get("cert") != "domain",
-             "block_ru": bool(params.get("block_ru", True)),
+             "block_ru": bool(params.get("block_ru", False)),
              "image": params.get("image") or DEFAULT_IMAGE, "domain": VPN_HOST}
         s["ports"] = [("udp", s["port"])]
         os.makedirs(local_dir(), exist_ok=True)
@@ -311,6 +311,14 @@ class Hysteria(Protocol):
 
     def restart(self) -> None:
         docker("restart", CONTAINER, timeout=120)
+
+    def set_block_ru(self, on: bool) -> None:
+        s = self.settings()
+        s["block_ru"] = bool(on)
+        write_config(s)
+        self.save_settings(s)
+        self.restart()
+        wait_started()
 
     def sync(self) -> str:
         """Клиенты проверяются хуком по базе — синхронизировать нечего."""

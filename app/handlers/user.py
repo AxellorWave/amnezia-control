@@ -12,7 +12,8 @@ from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardMarkup
 from .. import detect
 from ..access import device_limit, has_access, is_admin, own_device
 from ..config import (ADMIN_IDS, ANDROID_URL, DESKTOP_SITE_URL, DESKTOP_URL, IOS_URL)
-from ..db import db, devices_count, get_device, get_user, now, set_user, user_devices
+from ..db import (db, devices_count, get_device, get_user, now, set_user, sub_devices,
+                  user_devices)
 from ..geo import server_location_html
 
 from ..protocols.awg import (add_peer, amnezia_key, client_conf, peer_stats, qr_png, remove_peer, server_info,
@@ -55,7 +56,12 @@ def main_menu(uid: int) -> tuple[str, InlineKeyboardMarkup]:
     limit = "" if lim is None else f" из {lim}"
     subs = detect.sub_protocols()
     info = []
-    if st or subs:
+    if st and subs:
+        n_awg = len(user_devices(uid))
+        info += [(f"{em('devices')} Устройства AmneziaWG", f"<b>{n_awg}</b>"),
+                 (f"{em('sub_devices')} Устройства подписки", f"<b>{n - n_awg}</b>"),
+                 (f"{em('limit')} Всего", f"<b>{n}{limit}</b>")]
+    elif st or subs:
         info.append((f"{em('devices')} Устройств", f"<b>{n}{limit}</b>"))
     info += [(f"{em('traffic')} Трафик", fmt_traffic(*user_traffic(uid))),
              (f"{em('globe')} Сервер", server_location_html())]
@@ -65,16 +71,24 @@ def main_menu(uid: int) -> tuple[str, InlineKeyboardMarkup]:
                   else "Здесь — твоя ссылка-подписка на все устройства")
     text = (f"<h2>{em('vpn')} Привет, {name}!</h2>"
             f"<p>Это твой личный VPN. {about} и посмотреть, как подключиться.</p>" + kv(info))
+    if st and subs:
+        text += (f"<blockquote>{em('idea')} <b>Почему два раздела.</b> "
+                 f"<b>Устройства AmneziaWG</b> — отдельный ключ на каждое устройство для "
+                 f"приложений AmneziaVPN и AmneziaWG. <b>Подписка</b> — одна ссылка на все "
+                 f"устройства для Happ, v2RayTun, Hiddify: внутри VLESS и Hysteria 2, они "
+                 f"по-другому маскируют трафик. Если один вариант не работает — попробуй "
+                 f"другой.</blockquote>")
     if st == "stopped":
         text += (f"<blockquote>{em('warn')} AmneziaWG временно недоступен — выдача новых "
                  f"конфигов отключена. Администратор уже в курсе.</blockquote>")
     if subs:
-        rows.append([btn("Моя подписка", "sub", style=None if st else "primary",
-                         icon="subscription")])
+        rows.append([btn("Подписка · VLESS и Hysteria 2", "sub",
+                         style=None if st else "primary", icon="subscription")])
     if st:
-        rows.append([btn("Мои устройства", "devs", icon="devices")])
+        rows.append([btn("Устройства AmneziaWG", "devs", icon="devices")])
         if st == "running":
-            rows.append([btn("Добавить устройство", "add", style="primary", icon="add")])
+            rows.append([btn("Добавить устройство AmneziaWG", "add", style="primary",
+                             icon="add")])
     rows.append([btn("Как подключиться", "help", icon="help"), btn("Статус", "status", icon="status")])
     rows.append([btn("Списки сервисов", "routes", icon="globe")])
     rows.append([btn("Не работает VPN", "sos", icon="sos"),
@@ -91,9 +105,9 @@ def devices_menu(uid: int) -> tuple[str, InlineKeyboardMarkup]:
     for d in devs:
         rows.append([btn(d["name"], f"dev:{d['id']}",
                          icon="online" if is_online(stats.get(d["pub"])) else "offline")])
-    rows.append([btn("Добавить устройство", "add", style="primary", icon="add")])
+    rows.append([btn("Добавить устройство AmneziaWG", "add", style="primary", icon="add")])
     rows.append([btn("Меню", "menu", icon="back")])
-    text = f"<h2>{em('devices')} Мои устройства</h2>"
+    text = f"<h2>{em('devices')} Устройства AmneziaWG</h2>"
     if devs:
         text += table([[dot(stats.get(d["pub"])), f"<b>{esc(d['name'])}</b>",
                         fmt_seen(stats[d["pub"]]["hs"] if d["pub"] in stats else 0)] for d in devs],
@@ -174,7 +188,7 @@ def guide_android() -> str:
 <p>Нажми кнопку <b>«Google Play»</b> под сообщением и установи <b>AmneziaVPN</b>.</p>
 
 <h3>2. Скопируй ключ</h3>
-<p>В боте: <b>Мои устройства → твоё устройство → Ключ для приложения</b>. Нажми на ключ — он скопируется целиком.</p>
+<p>В боте: <b>Устройства AmneziaWG → твоё устройство → Ключ для приложения</b>. Нажми на ключ — он скопируется целиком.</p>
 
 <h3>3. Добавь подключение</h3>
 <ol>
@@ -207,7 +221,7 @@ def guide_ios() -> str:
 <p>Нажми кнопку <b>«App Store»</b> под сообщением и установи <b>DefaultVPN</b>.</p>
 
 <h3>2. Скопируй ключ</h3>
-<p>В боте: <b>Мои устройства → твоё устройство → Ключ для приложения</b>. Нажми на ключ — он скопируется целиком.</p>
+<p>В боте: <b>Устройства AmneziaWG → твоё устройство → Ключ для приложения</b>. Нажми на ключ — он скопируется целиком.</p>
 
 <h3>3. Добавь подключение</h3>
 <ol>
@@ -278,7 +292,7 @@ def guide_desktop(os_name: str) -> str:
 {install}
 
 <h3>2. Скопируй ключ</h3>
-<p>В боте: <b>Мои устройства → твоё устройство → Ключ для приложения</b>. Нажми на ключ — он скопируется целиком. Удобнее всего открыть бота прямо на компьютере (Telegram Desktop или web.telegram.org).</p>
+<p>В боте: <b>Устройства AmneziaWG → твоё устройство → Ключ для приложения</b>. Нажми на ключ — он скопируется целиком. Удобнее всего открыть бота прямо на компьютере (Telegram Desktop или web.telegram.org).</p>
 
 <h3>3. Добавь подключение</h3>
 <ol>
@@ -655,7 +669,7 @@ async def cb_guide(cb: CallbackQuery):
         guide, store = guide_ios(), [btn("App Store", url=IOS_URL, icon="download")]
         split = "gs:defaultvpn"
     await show(cb, guide, kb(store, [btn("Раздельное туннелирование", split, icon="ip_change")],
-                             [btn("Мои устройства", "devs", icon="devices"),
+                             [btn("Устройства AmneziaWG", "devs", icon="devices"),
                               btn("Назад", "help", icon="back")]))
 
 

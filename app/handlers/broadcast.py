@@ -736,11 +736,42 @@ def conversation_view(chat_id: int) -> str:
 async def cb_conversation(cb: CallbackQuery):
     chat_id = int(cb.data[5:])
     u = get_user(chat_id)
+    feed = B.conversation_view(chat_id, cb.from_user.id)
     text = (f"<h3>{em('message')} Переписка</h3>" + (user_table(u) if u else "")
-            + (B.conversation_view(chat_id) or "<p>Сообщений пока нет.</p>"))
-    await show(cb, text, kb([btn("Написать", f"msg:{chat_id}", style="primary", icon="message")],
-                            [btn("Карточка", f"u:{chat_id}", icon="user")]))
+            + (feed or "<p>Сообщений пока нет.</p>"))
+    rows = [[btn("Написать", f"msg:{chat_id}", style="primary", icon="message")]]
+    if feed:
+        rows.append([btn("Показать с вложениями", f"msgf:{chat_id}", icon="history")])
+    rows.append([btn("Карточка", f"u:{chat_id}", icon="user")])
+    await show(cb, text, kb(*rows))
     await cb.answer()
+
+
+@router.callback_query(F.data.startswith("msgf:"))
+@admin_only
+async def cb_conversation_full(cb: CallbackQuery, bot: Bot):
+    """Переслать админу последние сообщения переписки целиком — с фото и файлами."""
+    chat_id = int(cb.data[5:])
+    u = get_user(chat_id)
+    them = ((u["name"] if u else "") or "Пользователь").split()[0]
+    await cb.answer("Пересылаю…")
+    for e in B.conversation_sources(chat_id):
+        who = ("Ты" if e["admin_id"] == cb.from_user.id else "Админ") \
+            if e["direction"] == "out" else them
+        icon = em("send") if e["direction"] == "out" else em("reply")
+        await send_view(bot, cb.message.chat.id,
+                        f"<p>{icon} <b>{esc(who)}</b> · <i>{esc(e['when'])}</i></p>")
+        for src_chat, src_msg in e["msgs"]:
+            try:
+                await bot.copy_message(cb.message.chat.id, src_chat, src_msg)
+            except Exception as ex:
+                log.debug("conversation copy %s/%s: %s", src_chat, src_msg, ex)
+                await send_view(bot, cb.message.chat.id, "<p><i>сообщение удалено</i></p>")
+                break
+        await asyncio.sleep(0.05)
+    await send_view(bot, cb.message.chat.id, f"<p>{em('ok')} Это последние сообщения.</p>",
+                    kb([btn("Написать", f"msg:{chat_id}", style="primary", icon="message"),
+                        btn("Карточка", f"u:{chat_id}", icon="user")]))
 
 
 @router.callback_query(F.data.in_({"urep", "umsg", "umsg:sos"}))

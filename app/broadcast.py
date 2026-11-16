@@ -27,7 +27,7 @@ log = logging.getLogger("amnezia-bot")
 MSK = timezone(timedelta(hours=3))
 RATE = 25                      # сообщений в секунду (лимит Bot API ~30/с на бота)
 DELETE_WINDOW = 48 * 3600      # Bot API: удалить сообщение можно в течение 48 часов
-SECTIONS = {"menu": "Меню", "sub": "Моя подписка", "devs": "Мои устройства", "help": "Как подключиться"}
+SECTIONS = {"menu": "Меню", "sub": "Моя подписка", "devs": "Устройства AmneziaWG", "help": "Как подключиться"}
 
 
 def init_tables() -> None:
@@ -45,6 +45,9 @@ def init_tables() -> None:
     db.execute("""CREATE TABLE IF NOT EXISTS conversations (
         id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, direction TEXT, admin_id INTEGER,
         ts TEXT, summary TEXT, src_chat INTEGER, src_msg INTEGER)""")
+    cols = [r[1] for r in db.execute("PRAGMA table_info(conversations)")]
+    if "bc_id" not in cols:   # личное сообщение админа — все его части лежат в bc_items
+        db.execute("ALTER TABLE conversations ADD COLUMN bc_id INTEGER")
     db.commit()
 
 
@@ -93,7 +96,7 @@ def summary_line(m: Message) -> str:
     meta = message_meta(m)
     if meta["text"]:
         t = meta["text"].replace("\n", " ")
-        return f"{KIND_NAMES[meta['kind']][0]}: {t[:60]}{'…' if len(t) > 60 else ''}"
+        return f"{KIND_NAMES[meta['kind']][0]}: {t[:120]}{'…' if len(t) > 120 else ''}"
     return KIND_NAMES[meta["kind"]][0]
 
 
@@ -420,11 +423,32 @@ def mark_blocked(chat_id: int) -> None:
 
 
 def record_conversation(chat_id: int, direction: str, admin_id: int | None, summary: str,
-                        src_chat: int | None = None, src_msg: int | None = None) -> None:
+                        src_chat: int | None = None, src_msg: int | None = None,
+                        bc_id: int | None = None) -> None:
     db.execute("INSERT INTO conversations (chat_id, direction, admin_id, ts, summary, src_chat, "
-               "src_msg) VALUES (?, ?, ?, ?, ?, ?, ?)",
-               (chat_id, direction, admin_id, now(), summary[:300], src_chat, src_msg))
+               "src_msg, bc_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+               (chat_id, direction, admin_id, now(), summary[:300], src_chat, src_msg, bc_id))
     db.commit()
+
+
+def conversation_summary(rows) -> str:
+    """Части личного сообщения с текстом: «текст: …», «3 фото (альбом): подпись»."""
+    parts = []
+    for u in units(rows):
+        kinds = {r["kind"] for r in u}
+        k = kinds.pop() if len(kinds) == 1 else "other"
+        name = f"{len(u)} {_kind_name(k, len(u))} (альбом)" if len(u) > 1 else KIND_NAMES.get(
+            k, KIND_NAMES["other"])[0]
+        text = ""
+        for r in u:
+            try:
+                text = (json.loads(r["meta"] or "{}").get("text") or "").replace("\n", " ")
+            except ValueError:
+                text = ""
+            if text:
+                break
+        parts.append(f"{name}: {text[:120]}{'…' if len(text) > 120 else ''}" if text else name)
+    return " · ".join(parts) or "сообщение"
 
 
 async def _deliver(bot: Bot, bc, us, o: dict, chat_id: int, state: dict) -> None:
@@ -491,7 +515,8 @@ async def _worker(bot: Bot, bc_id: int) -> None:
                            emoji_fallback=int(state["emoji_fallback"]))
                 if bc["kind"] == "personal":
                     record_conversation(bc["target"], "out", bc["admin_id"],
-                                        draft_summary(items(bc_id)), *_first_src(bc_id))
+                                        conversation_summary(items(bc_id)), *_first_src(bc_id),
+                                        bc_id=bc_id)
                 break
             await _deliver(bot, bc, us, o, row["chat_id"], state)
             if state["emoji_fallback"] and not bc["emoji_fallback"]:
@@ -583,13 +608,38 @@ def conversation_rows(chat_id: int, limit: int = 15):
                       (chat_id, limit)).fetchall()
 
 
-def conversation_view(chat_id: int) -> str:
-    """Переписка с человеком — HTML для карточки пользователя в админке."""
+def _when(ts: str | None) -> str:
+    t = (ts or "")[:16].replace("T", " ")
+    return f"{t[8:10]}.{t[5:7]} {t[11:16]}" if len(t) >= 16 else t
+
+
+def conversation_view(chat_id: int, viewer: int | None = None) -> str:
+    """Переписка с человеком — лента «кто · когда · что» для админки."""
     rows = conversation_rows(chat_id)
     if not rows:
         return ""
-    from .ui import esc, table
-    return table([[(em("send") if r["direction"] == "out" else em("reply")),
-                   esc((r["ts"] or "")[5:16].replace("T", " ")), esc(r["summary"])]
-                  for r in reversed(rows)],
-                 head=["", "Когда", "Сообщение"], caption=f"{em('message')} Переписка")
+    from .ui import esc
+    u = db.execute("SELECT name FROM users WHERE chat_id=?", (chat_id,)).fetchone()
+    them = esc(((u["name"] if u else "") or "Пользователь").split()[0])
+    out = []
+    for r in reversed(rows):
+        if r["direction"] == "out":
+            who = f"{em('send')} <b>{'Ты' if viewer and r['admin_id'] == viewer else 'Админ'}</b>"
+        else:
+            who = f"{em('reply')} <b>{them}</b>"
+        out.append(f"<p>{who} · <i>{esc(_when(r['ts']))}</i><br>{esc(r['summary'])}</p>")
+    return "".join(out)
+
+
+def conversation_sources(chat_id: int, limit: int = 10) -> list[dict]:
+    """Последние сообщения переписки для пересылки целиком (с фото, голосовыми)."""
+    res = []
+    for r in reversed(conversation_rows(chat_id, limit)):
+        msgs = []
+        if r["bc_id"]:
+            msgs = [(i["chat_id"], i["message_id"]) for i in items(r["bc_id"])]
+        elif r["src_chat"] and r["src_msg"]:
+            msgs = [(r["src_chat"], r["src_msg"])]
+        res.append({"direction": r["direction"], "admin_id": r["admin_id"],
+                    "when": _when(r["ts"]), "msgs": msgs})
+    return res

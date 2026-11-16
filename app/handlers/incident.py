@@ -162,7 +162,7 @@ async def cb_sos_step(cb: CallbackQuery):
         if u and u["sub_token"] and detect.sub_protocols():
             rows.append([btn("Перевыпустить ссылку", "sub:reissue", style="danger", icon="key")])
         if user_devices(uid):
-            rows.append([btn("Мои устройства", "devs", icon="devices")])
+            rows.append([btn("Устройства AmneziaWG", "devs", icon="devices")])
     elif key == "upd" and detect.sub_protocols():
         rows.append([btn("Моя подписка", "sub", icon="subscription")])
     rows.append([btn("Назад к шагам", "sos", icon="back")])
@@ -178,7 +178,9 @@ async def cb_inc_fixed(cb: CallbackQuery, bot: Bot):
     if not health.open_incident_row():
         await cb.answer("Открытого инцидента нет")
         r = await health.check(force=True)
-        return await show(cb, f"<h3>{em('health_ok')} Инцидентов нет</h3>" + health.result_html(r))
+        return await show(cb, f"<h3>{em('health_ok')} Инцидентов нет</h3>" + health.result_html(r),
+                          kb([btn("Проверить сейчас", "inc:check", icon="refresh")],
+                             [btn("Админка", "adm", icon="back")]))
     await cb.answer("Проверяю…")
     await show(cb, f"<p>{em('pending')} Проверяю IP, DNS и доступность из России…</p>")
     try:
@@ -187,7 +189,8 @@ async def cb_inc_fixed(cb: CallbackQuery, bot: Bot):
         status = f"Ошибка проверки: {e}"
     inc = health.open_incident_row()
     if not inc:
-        return await show(cb, f"<h3>{em('health_ok')} Инцидент закрыт</h3><p>{esc(status)}</p>")
+        return await show(cb, f"<h3>{em('health_ok')} Инцидент закрыт</h3><p>{esc(status)}</p>",
+                          kb([btn("Админка", "adm", icon="back")]))
     await show(cb, f"<h3>{em('incident')} Инцидент ещё открыт</h3><p>{esc(status)}</p>"
                    + health.result_html(health.last_result()), health.admin_kb())
 
@@ -207,7 +210,8 @@ async def cb_inc_status(cb: CallbackQuery):
                 + health.result_html(r))
         return await show(cb, text, health.admin_kb())
     await show(cb, f"<h3>{em('health_ok')} Инцидентов нет</h3>" + health.result_html(r),
-               kb([btn("Проверить сейчас", "inc:check", icon="refresh")]))
+               kb([btn("Проверить сейчас", "inc:check", icon="refresh")],
+                  [btn("Админка", "adm", icon="back")]))
 
 
 @router.callback_query(F.data.in_({"blk", "blk:check"}))

@@ -138,7 +138,7 @@ def build_config(s: dict, users) -> dict:
     rules = [{"inboundTag": ["api"], "outboundTag": "api"},
              {"protocol": ["bittorrent"], "outboundTag": "block"},
              {"ip": ["geoip:private"], "outboundTag": "block"}]
-    if s.get("block_ru", True):
+    if s.get("block_ru"):
         rules += [{"domain": ["geosite:category-ru", "regexp:.*\\.ru$", "regexp:.*\\.su$",
                               "regexp:.*\\.xn--p1ai$"], "outboundTag": "block"},
                   {"ip": ["geoip:ru"], "outboundTag": "block"}]
@@ -191,8 +191,10 @@ def write_config(s: dict, users) -> dict:
 
 def run_container(s: dict) -> None:
     docker_util.remove(CONTAINER)
+    # Образ distroless запускается не от root, а такому процессу нельзя слушать порты < 1024
+    # (443) — «bind: permission denied». Запускаем от root, как и Hysteria.
     docker("run", "-d", "--name", CONTAINER, "--network", "host", "--restart", "unless-stopped",
-           "--label", LABEL, "--log-opt", "max-size=5m", "--log-opt", "max-file=2",
+           "--user", "0:0", "--label", LABEL, "--log-opt", "max-size=5m", "--log-opt", "max-file=2",
            "-v", f"{host_dir()}:{MOUNT}:ro", s.get("image", DEFAULT_IMAGE),
            "run", "-c", f"{MOUNT}/config.json", timeout=120)
 
@@ -254,7 +256,7 @@ class Xray(Protocol):
         s = {"port": int(params["port"]), "xhttp": bool(params.get("xhttp")),
              "xhttp_port": int(params.get("xhttp_port") or 8443),
              "xhttp_path": "/" + secrets.token_hex(6), "sni": params["sni"],
-             "block_ru": bool(params.get("block_ru", True)), "api_port": API_PORT,
+             "block_ru": bool(params.get("block_ru", False)), "api_port": API_PORT,
              "image": params.get("image") or DEFAULT_IMAGE}
         progress(f"Проверка цели REALITY {s['sni']}")
         t = check_target(s["sni"])
@@ -310,6 +312,14 @@ class Xray(Protocol):
 
     def restart(self) -> None:
         docker("restart", CONTAINER, timeout=120)
+
+    def set_block_ru(self, on: bool) -> None:
+        s = self.settings()
+        s["block_ru"] = bool(on)
+        write_config(s, self.users())
+        self.save_settings(s)
+        self.restart()
+        wait_started()
 
     # --- клиенты
     def sync(self) -> str:

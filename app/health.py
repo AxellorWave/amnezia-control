@@ -524,7 +524,8 @@ def sos_kb():
 
 def admin_kb():
     return kb([btn("Починил", "inc:fixed", style="success", icon="repaired")],
-              [btn("Проверить сейчас", "inc:check", icon="refresh")])
+              [btn("Проверить сейчас", "inc:check", icon="refresh")],
+              [btn("Админка", "adm", icon="back")])
 
 
 async def open_incident(bot, result: dict, by_user: int | None = None):

@@ -84,3 +84,24 @@ def test_link_markup():
     assert mk.inline_keyboard[0][0].url == "https://t.me/x"
     mk = B.link_markup({"link": {"text": "Подписка", "section": "sub"}})
     assert mk.inline_keyboard[0][0].callback_data == "sub"
+
+
+def test_conversation_keeps_admin_text_and_feed():
+    import json as _j
+    uid = 7071
+    set_user(uid, name="Иван Петров", username="ivan")
+    db.execute("DELETE FROM conversations WHERE chat_id=?", (uid,))
+    bc = B.create("personal", 1, target=uid)
+    db.execute("INSERT INTO bc_items (bc_id, chat_id, message_id, media_group_id, kind, meta) "
+               "VALUES (?, 1, 10, NULL, 'text', ?)", (bc, _j.dumps({"kind": "text", "text": "Привет, как VPN?"})))
+    db.execute("INSERT INTO bc_items (bc_id, chat_id, message_id, media_group_id, kind, meta) "
+               "VALUES (?, 1, 11, NULL, 'photo', ?)", (bc, _j.dumps({"kind": "photo", "text": "скрин"})))
+    db.commit()
+    s = B.conversation_summary(B.items(bc))
+    assert "Привет, как VPN?" in s and "фото: скрин" in s
+    B.record_conversation(uid, "out", 1, s, 1, 10, bc_id=bc)
+    B.record_conversation(uid, "in", None, "текст: всё работает", uid, 55)
+    feed = B.conversation_view(uid, viewer=1)
+    assert "Ты" in feed and "Иван" in feed and "всё работает" in feed
+    src = B.conversation_sources(uid)
+    assert src[0]["msgs"] == [(1, 10), (1, 11)] and src[1]["msgs"] == [(uid, 55)]
