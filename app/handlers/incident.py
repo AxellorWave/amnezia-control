@@ -6,7 +6,7 @@ from datetime import datetime
 from aiogram import Bot, F, Router
 from aiogram.types import CallbackQuery
 
-from .. import detect, health
+from .. import blockcheck, detect, health
 from ..access import device_limit, has_access, is_admin
 from ..db import devices_count, get_user, user_devices
 from ..ui import btn, em, esc, fmt_seen, kb, kv, show
@@ -208,3 +208,16 @@ async def cb_inc_status(cb: CallbackQuery):
         return await show(cb, text, health.admin_kb())
     await show(cb, f"<h3>{em('health_ok')} Инцидентов нет</h3>" + health.result_html(r),
                kb([btn("Проверить сейчас", "inc:check", icon="refresh")]))
+
+
+@router.callback_query(F.data.in_({"blk", "blk:check"}))
+@admin_only
+async def cb_blockcheck(cb: CallbackQuery):
+    force = cb.data == "blk:check"
+    await cb.answer("Проверяю…" if force else "")
+    if force or not blockcheck.last_result():
+        await show(cb, f"<p>{em('pending')} Проверяю IP и домен по спискам блокировок…</p>")
+    r = await blockcheck.check(force=force)
+    await show(cb, f"<h3>{em('lock')} Блокировка IP</h3>" + blockcheck.result_html(r),
+               kb([btn("Проверить сейчас", "blk:check", icon="refresh")],
+                  [btn("Админка", "adm", icon="back")]))

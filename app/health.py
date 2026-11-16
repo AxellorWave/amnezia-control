@@ -50,6 +50,7 @@ STATUS_TEXT = {"ok": "доступен из России", "ip_blocked": "IP з�
                "server_down": "сервер недоступен отовсюду",
                "partial": "часть протоколов недоступна", "unknown": "не удалось проверить"}
 TTL_MIN_WAIT = 600               # у Timeweb минимальный TTL — 600 с
+AWG_HS_FRESH = 300               # рукопожатие клиента AWG моложе 5 мин — протокол работает
 
 
 # ==================================================================== БД ===
@@ -103,7 +104,10 @@ def _settings_ports(pid: str) -> list[tuple[str, int]]:
 
 
 def targets() -> list[dict]:
-    """[{pid, proto, port}] — порты установленных протоколов и сервера подписок."""
+    """[{pid, proto, port}] — порты установленных протоколов и сервера подписок.
+
+    Сервер подписок проверяется, только если установлен Xray или Hysteria 2: без них
+    подпиской никто не пользуется, и её недоступность не должна открывать инцидент."""
     res = []
     for pid in ("awg", "xray", "hy2"):
         e = detect.get(pid)
@@ -112,7 +116,7 @@ def targets() -> list[dict]:
         ports = list(e.get("ports") or []) or _settings_ports(pid)
         for proto, port in ports:
             res.append({"pid": pid, "proto": proto, "port": int(port)})
-    if SUB_PORT:
+    if SUB_PORT and detect.sub_protocols():
         res.append({"pid": "sub", "proto": "tcp", "port": int(SUB_PORT)})
     seen, out = set(), []
     for t in res:
@@ -240,8 +244,31 @@ async def _do_check(host: str) -> dict:
             f = {n: out.get(n, "unknown") for n in foreign}
             item = dict(t, state=target_state(list(r.values()), list(f.values())), ru=r, foreign=f)
         result["items"].append(item)
+    await apply_awg_handshakes(result["items"])
     result["status"] = classify(result["items"])
     return result
+
+
+def last_awg_handshake() -> float:
+    """Unix-время самого свежего рукопожатия клиента AmneziaWG (0 — нет данных)."""
+    from .protocols import awg
+    return max((st["hs"] for st in awg.peer_stats().values() if st.get("hs")), default=0)
+
+
+async def apply_awg_handshakes(items: list[dict]) -> None:
+    """UDP снаружи не проверить: если клиенты AWG недавно делали рукопожатие — протокол
+    работает. Нет свежих рукопожатий — оставляем «нет данных», как и было."""
+    awg_items = [i for i in items if i["pid"] == "awg" and i["state"] == "unknown"]
+    if not awg_items:
+        return
+    try:
+        hs = await asyncio.to_thread(last_awg_handshake)
+    except Exception as e:
+        log.debug("awg handshakes: %s", e)
+        return
+    if hs and time.time() - hs < AWG_HS_FRESH:
+        for i in awg_items:
+            i.update(state="ok", handshake=hs)
 
 
 async def check(force: bool = False, host: str | None = None,
@@ -300,6 +327,11 @@ def result_html(result: dict | None, nodes_detail: bool = True) -> str:
     if rows:
         head = ["Протокол", "Порт", "Итог"] + (["Из РФ", "Из-за рубежа"] if nodes_detail else [])
         text += table(rows, head=head)
+        for i in result.get("items", []):
+            if i.get("handshake"):
+                ago = max(1, round((result["ts"] - i["handshake"]) / 60))
+                text += (f"<p>{em('ok')} {PROTO_TITLE.get(i['pid'], i['pid'])}: клиенты "
+                         f"подключались {ago} мин назад — протокол работает.</p>")
         if any(i["proto"] == "udp" for i in result.get("items", [])):
             text += (f"<p><i>{em('question')} UDP: VPN-сервер не отвечает на пробные пакеты, "
                      f"поэтому «нет ответа» по UDP — это норма, а не ошибка.</i></p>")

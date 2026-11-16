@@ -6,7 +6,8 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.types import BotCommand
 
-from . import backup, broadcast as bcast, detect, geo, health, routes, sub_server, subsync
+from . import (backup, blockcheck, broadcast as bcast, detect, geo, health, routes, sub_server,
+               subsync)
 from .config import ADMIN_IDS, BOT_TOKEN
 from .db import touch_bot
 from .handlers import (admin, backup_admin, broadcast, incident, protocols_admin, subscription,
@@ -82,6 +83,7 @@ async def main():
                 asyncio.create_task(backup.backup_loop(bot)),
                 asyncio.create_task(bcast.broadcast_loop(bot)),
                 asyncio.create_task(health.health_loop(bot)),
+                asyncio.create_task(blockcheck.blockcheck_loop(bot)),
                 asyncio.create_task(health.incident_watch_loop(bot)),
                 asyncio.create_task(routes.routes_loop())])
     await dp.start_polling(bot)

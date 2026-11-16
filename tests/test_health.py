@@ -112,3 +112,33 @@ def test_active_users():
     db.commit()
     ids = health.active_user_ids({503})
     assert 501 in ids and 503 in ids and 502 not in ids
+
+
+def test_targets_skip_subscription_without_sub_protocols(monkeypatch):
+    awg = {"ports": [("udp", 33667)]}
+    xray = {"ports": [("tcp", 443)]}
+    entries = {"awg": awg}
+    monkeypatch.setattr(health.detect, "get", lambda pid: entries.get(pid))
+    monkeypatch.setattr(health.detect, "sub_protocols",
+                        lambda: [p for p in ("xray", "hy2") if p in entries])
+    assert [t["pid"] for t in health.targets()] == ["awg"]
+    entries["xray"] = xray
+    assert [t["pid"] for t in health.targets()] == ["awg", "xray", "sub"]
+
+
+def test_awg_handshake_marks_ok(monkeypatch):
+    items = [{"pid": "awg", "proto": "udp", "port": 33667, "state": "unknown"}]
+    monkeypatch.setattr(health, "last_awg_handshake", lambda: time.time() - 60)
+    asyncio.run(health.apply_awg_handshakes(items))
+    assert items[0]["state"] == "ok" and items[0]["handshake"]
+    assert health.classify(items) == "ok"
+
+
+def test_awg_without_fresh_handshake_stays_unknown(monkeypatch):
+    items = [{"pid": "awg", "proto": "udp", "port": 33667, "state": "unknown"}]
+    monkeypatch.setattr(health, "last_awg_handshake", lambda: time.time() - 3600)
+    asyncio.run(health.apply_awg_handshakes(items))
+    assert items[0]["state"] == "unknown"
+    monkeypatch.setattr(health, "last_awg_handshake", lambda: 0)
+    asyncio.run(health.apply_awg_handshakes(items))
+    assert items[0]["state"] == "unknown"
