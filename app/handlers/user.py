@@ -9,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardMarkup, Message
 
+from .. import detect
 from ..access import device_limit, has_access, is_admin, own_device
 from ..config import (ADMIN_IDS, ANDROID_URL, DESKTOP_SITE_URL, DESKTOP_URL, IOS_URL)
 from ..db import db, get_device, get_user, now, set_user, user_devices
@@ -29,23 +30,45 @@ class AddDevice(StatesGroup):
     name = State()
 
 
+def awg_state() -> str:
+    """"running" | "stopped" | "" (AWG не установлен)."""
+    e = detect.get("awg")
+    return e["state"] if e else ""
+
+
 def main_menu(uid: int) -> tuple[str, InlineKeyboardMarkup]:
     u = get_user(uid)
+    name = esc(u["name"].split()[0]) if u and u["name"] else "друг"
+    st = awg_state()
+    rows = []
+    if not detect.any_installed():
+        text = (f"<h2>{em('vpn')} Привет, {name}!</h2>"
+                f"<p>{em('pending')} <b>VPN пока не настроен</b> — администратор уже в курсе. "
+                f"Как только всё будет готово, здесь появятся кнопки для подключения.</p>")
+        if is_admin(uid):
+            rows.append([btn("Протоколы", "proto", style="primary", icon="protocols")])
+            rows.append([btn("Админка", "adm", icon="admin")])
+        return text, kb(*rows)
+
     n = len(user_devices(uid))
     lim = device_limit(uid)
     limit = "" if lim is None else f" из {lim}"
-    name = esc(u["name"].split()[0]) if u and u["name"] else "друг"
+    info = []
+    if st:
+        info.append((f"{em('devices')} Устройств", f"<b>{n}{limit}</b>"))
+    info += [(f"{em('traffic')} Трафик", fmt_traffic(*user_traffic(uid))),
+             (f"{em('globe')} Сервер", server_location_html())]
     text = (f"<h2>{em('vpn')} Привет, {name}!</h2>"
             f"<p>Это твой личный VPN. Здесь можно выпустить конфиг для каждого устройства "
-            f"и посмотреть, как подключиться.</p>"
-            + kv([(f"{em('devices')} Устройств", f"<b>{n}{limit}</b>"),
-                  (f"{em('traffic')} Трафик", fmt_traffic(*user_traffic(uid))),
-                  (f"{em('globe')} Сервер", server_location_html())]))
-    rows = [
-        [btn("Мои устройства", "devs", icon="devices")],
-        [btn("Добавить устройство", "add", style="primary", icon="add")],
-        [btn("Как подключиться", "help", icon="help"), btn("Статус", "status", icon="status")],
-    ]
+            f"и посмотреть, как подключиться.</p>" + kv(info))
+    if st == "stopped":
+        text += (f"<blockquote>{em('warn')} AmneziaWG временно недоступен — выдача новых "
+                 f"конфигов отключена. Администратор уже в курсе.</blockquote>")
+    if st:
+        rows.append([btn("Мои устройства", "devs", icon="devices")])
+        if st == "running":
+            rows.append([btn("Добавить устройство", "add", style="primary", icon="add")])
+    rows.append([btn("Как подключиться", "help", icon="help"), btn("Статус", "status", icon="status")])
     if is_admin(uid):
         rows.append([btn("Админка", "adm", icon="admin")])
     return text, kb(*rows)
@@ -83,6 +106,8 @@ def device_card(d, viewer: int) -> tuple[str, InlineKeyboardMarkup]:
     except Exception:
         pass
     status = f"{dot(st)} в сети" if is_online(st) else f"{dot(st)} {fmt_seen(st['hs'] if st else 0)}"
+    if awg_state() != "running":
+        status = f"{em('warn')} временно недоступен"
     info = [("Статус", status)]
     if d["rx_total"] or d["tx_total"]:
         info.append((f"{em('traffic')} Трафик", fmt_traffic(d["rx_total"], d["tx_total"])))
@@ -271,7 +296,7 @@ def status_view(kind: str, uid: int) -> tuple[str, InlineKeyboardMarkup]:
         users = {d["pub"]: d for d in db.execute(
             "SELECT d.pub, d.name, u.username, u.chat_id FROM devices d "
             "LEFT JOIN users u ON u.chat_id=d.chat_id")}
-        for p in server_peers():
+        for p in (server_peers() if awg_state() == "running" else []):
             d = users.get(p["pub"])
             if d:
                 who = f"@{d['username']}" if d["username"] else str(d["chat_id"])
@@ -383,6 +408,9 @@ async def ask_name(cb: CallbackQuery, state: FSMContext):
     uid = cb.from_user.id
     if not has_access(uid):
         return await cb.answer("Доступ не выдан", show_alert=True)
+    if awg_state() != "running":
+        return await cb.answer("AmneziaWG сейчас недоступен — выдача новых конфигов временно "
+                               "отключена.", show_alert=True)
     lim = device_limit(uid)
     if lim is not None and len(user_devices(uid)) >= lim:
         return await cb.answer(f"Максимум {lim} устройств. Удали ненужное.", show_alert=True)
@@ -412,6 +440,9 @@ async def create_device(m: Message, bot: Bot, state: FSMContext):
     if lim is not None and len(user_devices(uid)) >= lim:
         await state.clear()
         return await show(m, f"<p>{em('warn')} Максимум {lim} устройств.</p>")
+    if awg_state() != "running":
+        await state.clear()
+        return await show(m, f"<p>{em('warn')} AmneziaWG сейчас недоступен — попробуй позже.</p>")
 
     await state.clear()
     u = get_user(uid)
@@ -464,6 +495,8 @@ async def send_config(cb: CallbackQuery, bot: Bot):
     d = own_device(cb.from_user.id, int(dev_id))
     if not d or not has_access(cb.from_user.id):
         return await cb.answer("Устройство не найдено", show_alert=True)
+    if awg_state() != "running":
+        return await cb.answer("AmneziaWG временно недоступен — попробуй позже.", show_alert=True)
     await cb.answer()
 
     info = await asyncio.to_thread(server_info)
@@ -518,6 +551,9 @@ async def ask_delete(cb: CallbackQuery):
 
 async def delete_device(d) -> None:
     await asyncio.to_thread(drop_device, d["id"])   # сначала снять трафик, пока пир жив
+    if not detect.running("awg"):
+        log.warning("AWG не запущен — устройство %s удалено только из базы", d["id"])
+        return
     async with wg_lock:
         await asyncio.to_thread(remove_peer, d["pub"])
 

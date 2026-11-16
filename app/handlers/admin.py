@@ -9,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
+from .. import detect
 from ..access import is_admin
 from ..config import MAX_DEVICES, VPN_HOST
 from ..db import bot_pubs, db, get_user, set_user, user_devices
@@ -38,15 +39,23 @@ def admin_menu() -> tuple[str, InlineKeyboardMarkup]:
     pending = q("SELECT COUNT(*) FROM users WHERE status='pending'")
     denied = q("SELECT COUNT(*) FROM users WHERE status IN ('denied', 'revoked')")
     devices = q("SELECT COUNT(*) FROM devices")
-    try:
-        peers = server_peers()
-        stats = peer_stats()
-        mine = bot_pubs()
-        app_n = sum(1 for p in peers if p["pub"] not in mine)
-        online = sum(1 for p in peers if is_online(stats.get(p["pub"])))
-        srv = f"{em('online')} работает, порт {server_info()['port']}"
-    except Exception as e:
-        app_n, online, srv = "?", "?", f"{em('error')} ошибка: {esc(str(e)[:100])}"
+    awg_e = detect.get("awg")
+    if not awg_e:
+        app_n, online = "—", "—"
+        srv = f"{em('offline')} AmneziaWG не установлен"
+    elif awg_e["state"] != "running":
+        app_n, online = "—", "—"
+        srv = f"{em('error')} AmneziaWG остановлен"
+    else:
+        try:
+            peers = server_peers()
+            stats = peer_stats()
+            mine = bot_pubs()
+            app_n = sum(1 for p in peers if p["pub"] not in mine)
+            online = sum(1 for p in peers if is_online(stats.get(p["pub"])))
+            srv = f"{em('online')} работает, порт {server_info()['port']}"
+        except Exception as e:
+            app_n, online, srv = "?", "?", f"{em('error')} ошибка: {esc(str(e)[:100])}"
     text = (f"<h2>{em('admin')} Админка</h2>"
             + kv([(f"{em('vpn')} Сервер", srv),
                   (f"{em('globe')} Адрес", f"<code>{esc(VPN_HOST)}</code>")])
@@ -56,7 +65,8 @@ def admin_menu() -> tuple[str, InlineKeyboardMarkup]:
                      [f"{em('devices')} Устройств через бота", f"<b>{devices}</b>"],
                      [f"{em('app')} Из приложения", f"<b>{app_n}</b>"],
                      [f"{em('online')} Сейчас в сети", f"<b>{online}</b>"]]))
-    rows = [[btn("Пользователи", "adm:users", icon="users"),
+    rows = [[btn("Протоколы", "proto", icon="protocols")],
+            [btn("Пользователи", "adm:users", icon="users"),
              btn(f"Заявки ({pending})", "adm:pending", icon="pending")],
             [btn("Из приложения", "adm:app", icon="app"), btn("Дашборд", "adm:dash", icon="status")],
             [btn(f"Отклонённые ({denied})", "adm:denied", icon="denied")],
@@ -143,6 +153,9 @@ def user_card(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
 
 
 def app_list() -> tuple[str, InlineKeyboardMarkup]:
+    if not detect.running("awg"):
+        return (f"<h2>{em('app')} Конфиги из приложения AmneziaVPN</h2>"
+                f"<p>AmneziaWG не запущен.</p>", kb([btn("Админка", "adm", icon="back")]))
     mine = bot_pubs()
     stats = peer_stats()
     peers = [p for p in server_peers() if p["pub"] not in mine]

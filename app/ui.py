@@ -14,7 +14,8 @@ from .config import ONLINE_SEC
 
 log = logging.getLogger("amnezia-bot")
 
-# Кастомные эмодзи (пак Telegram iOS Icons, t.me/addemoji/tgiosicons).
+# Кастомные эмодзи (исходные роли — пак Telegram iOS Icons, t.me/addemoji/tgiosicons;
+# новые — каталог premium-telegram-emoji, пак sfsymbols).
 # Работают, если у владельца бота Telegram Premium. Без Premium Telegram
 # отклоняет их — тогда бот сам переключается на обычные эмодзи.
 
@@ -47,7 +48,45 @@ EMOJI = {   # имя: (обычный эмодзи, id кастомного)
     "online": ("🟢", "5330533835765462529"),    "offline": ("⚪️", "5330203192003146212"),
     "error": ("🔴", "5974083768233760323"),
     "id": ("🆔", "5332465669105529951"),        "phone": ("📱", "5870748341150683538"),
+    # --- новые роли: каталог https://github.com/Zulut30/premium-telegram-emoji,
+    # основной пак sfsymbols (профиль — emoji-style.json в корне проекта)
+    "protocols": ("🧩", "6024065724291488135"),     # premium-telegram-emoji: sfsymbols/sfsymbols_pazl
+    "install": ("📥", "6021856393114426113"),       # premium-telegram-emoji: sfsymbols/sfsymbols_skachat_v_lotok
+    "uninstall": ("🗑", "6021770695631969012"),     # premium-telegram-emoji: sfsymbols/sfsymbols_korobka_s_krestikom
+    "backup": ("💾", "6021525053567409034"),        # premium-telegram-emoji: sfsymbols/sfsymbols_arkhivnaya_korobka
+    "restore_backup": ("♻️", "6023782655881910515"),  # premium-telegram-emoji: sfsymbols/sfsymbols_korobka_so_strelkoy_vverkh
+    "subscription": ("🔗", "6021344879689341042"),  # premium-telegram-emoji: sfsymbols/sfsymbols_tsep
+    "hwid_device": ("📱", "6021859429656304791"),   # premium-telegram-emoji: sfsymbols/sfsymbols_planshet_i_telefon
+    "sub_devices": ("👤", "6023933602507528561"),   # premium-telegram-emoji: sfsymbols/sfsymbols_polzovatel_i_ustroystva
+    "xray": ("⚡️", "6023761060786346622"),          # premium-telegram-emoji: sfsymbols/sfsymbols_molniya
+    "hysteria": ("🐇", "6024048192234985393"),      # premium-telegram-emoji: sfsymbols/sfsymbols_krolik
+    "awg": ("🛡", "6019328362479097179"),           # premium-telegram-emoji: sfsymbols/sfsymbols_shchit_s_kletkami
+    "server": ("🖥", "6021728265650051545"),        # premium-telegram-emoji: sfsymbols/sfsymbols_server
+    "broadcast": ("📣", "6021726637857446455"),     # premium-telegram-emoji: sfsymbols/sfsymbols_megafon
+    "draft": ("📝", "6023843687367190257"),         # premium-telegram-emoji: sfsymbols/sfsymbols_novyy_dokument
+    "message": ("💬", "6019107055699236857"),       # premium-telegram-emoji: sfsymbols/sfsymbols_ovalnoe_oblako_soobshcheniya
+    "reply": ("↩️", "5807899225714858124"),         # premium-telegram-emoji: sfsymbols/sfsymbols_vernutsya_izognutoy_strelkoy
+    "incident": ("⚠️", "6019102674832595118"),      # premium-telegram-emoji: sfsymbols/sfsymbols_treugolnik_s_vosklitsaniem
+    "sos": ("🆘", "6021798595739523148"),           # premium-telegram-emoji: sfsymbols/sfsymbols_nadpis_sos
+    "repaired": ("🛠", "6021401276904905698"),      # premium-telegram-emoji: sfsymbols/sfsymbols_otvyortka_i_klyuch
+    "ip_change": ("🔀", "5807760901998125610"),     # premium-telegram-emoji: sfsymbols/sfsymbols_dve_gorizontalnye_strelki
+    "dns": ("🌐", "6019205852831947754"),           # premium-telegram-emoji: sfsymbols/sfsymbols_globus_s_meridianami
+    "health_ok": ("✅", "6021868492037298942"),     # premium-telegram-emoji: sfsymbols/sfsymbols_shchit_s_galochkoy
+    "health_bad": ("⛔️", "6019548599812103366"),    # premium-telegram-emoji: sfsymbols/sfsymbols_shchit_s_krestikom
+    "limit": ("🎛", "6026248173268243634"),         # premium-telegram-emoji: sfsymbols/sfsymbols_spidometr
+    "schedule": ("📅", "6023880246128810031"),      # premium-telegram-emoji: sfsymbols/sfsymbols_kalendarnaya_setka
+    "stop": ("⏹", "5807622114424924272"),           # premium-telegram-emoji: sfsymbols/sfsymbols_stop_v_kruge
+    "pause": ("⏸", "5807945302124012062"),          # premium-telegram-emoji: sfsymbols/sfsymbols_pauza
+    "play": ("▶️", "5807414083388971488"),          # premium-telegram-emoji: sfsymbols/sfsymbols_vosproizvedenie
+    "group": ("👥", "6021791869820738130"),         # premium-telegram-emoji: sfsymbols/sfsymbols_dva_cheloveka_s_razvedyonnymi_rukami
+    "history": ("🕘", "6035297458907519073"),       # premium-telegram-emoji: sfsymbols/sfsymbols_istoriya_vremeni
 }
+# роли из каталога premium-telegram-emoji (проверяются тестом tests/test_emoji.py)
+CATALOG_ROLES = ("protocols", "install", "uninstall", "backup", "restore_backup", "subscription",
+                 "hwid_device", "sub_devices", "xray", "hysteria", "awg", "server", "broadcast",
+                 "draft", "message", "reply", "incident", "sos", "repaired", "ip_change", "dns",
+                 "health_ok", "health_bad", "limit", "schedule", "stop", "pause", "play", "group",
+                 "history")
 EMOJI_BY_ID = {cid: plain for plain, cid in EMOJI.values() if cid}
 
 

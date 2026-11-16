@@ -36,7 +36,14 @@ def init_db():
         for c in cols_:
             if c not in have:
                 db.execute(f"ALTER TABLE {table_} ADD COLUMN {c} INTEGER NOT NULL DEFAULT 0")
+    # протоколы, установленные/известные боту: порты, ключи, SNI и т.п. в settings (JSON)
+    db.execute("""CREATE TABLE IF NOT EXISTS protocols (id TEXT PRIMARY KEY, origin TEXT,
+                  container TEXT, settings TEXT, installed_at TEXT)""")
     db.commit()
+
+
+def protocol_row(pid: str):
+    return db.execute("SELECT * FROM protocols WHERE id=?", (pid,)).fetchone()
 
 
 def now() -> str:

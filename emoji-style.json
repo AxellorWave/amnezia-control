@@ -1,0 +1,250 @@
+{
+  "schema_version": 1,
+  "style": "minimal",
+  "primary_pack": "sfsymbols",
+  "secondary_packs": [],
+  "roles": {
+    "protocols": {
+      "id": "6024065724291488135",
+      "key": "sfsymbols_pazl",
+      "name": "Пазл",
+      "pack": "sfsymbols",
+      "html_fallback": "🧩",
+      "query": "protocols"
+    },
+    "install": {
+      "id": "6021856393114426113",
+      "key": "sfsymbols_skachat_v_lotok",
+      "name": "Скачать в лоток",
+      "pack": "sfsymbols",
+      "html_fallback": "📥",
+      "query": "install"
+    },
+    "uninstall": {
+      "id": "6021770695631969012",
+      "key": "sfsymbols_korobka_s_krestikom",
+      "name": "Коробка с крестиком",
+      "pack": "sfsymbols",
+      "html_fallback": "🗃",
+      "query": "uninstall"
+    },
+    "backup": {
+      "id": "6021525053567409034",
+      "key": "sfsymbols_arkhivnaya_korobka",
+      "name": "Архивная коробка",
+      "pack": "sfsymbols",
+      "html_fallback": "🗃",
+      "query": "backup"
+    },
+    "restore_backup": {
+      "id": "6023782655881910515",
+      "key": "sfsymbols_korobka_so_strelkoy_vverkh",
+      "name": "Коробка со стрелкой вверх",
+      "pack": "sfsymbols",
+      "html_fallback": "🗃",
+      "query": "restore_backup"
+    },
+    "subscription": {
+      "id": "6021344879689341042",
+      "key": "sfsymbols_tsep",
+      "name": "Цепь",
+      "pack": "sfsymbols",
+      "html_fallback": "⛓️",
+      "query": "subscription"
+    },
+    "hwid_device": {
+      "id": "6021859429656304791",
+      "key": "sfsymbols_planshet_i_telefon",
+      "name": "Планшет и телефон",
+      "pack": "sfsymbols",
+      "html_fallback": "📱",
+      "query": "hwid_device"
+    },
+    "sub_devices": {
+      "id": "6023933602507528561",
+      "key": "sfsymbols_polzovatel_i_ustroystva",
+      "name": "Пользователь и устройства",
+      "pack": "sfsymbols",
+      "html_fallback": "👤",
+      "query": "sub_devices"
+    },
+    "xray": {
+      "id": "6023761060786346622",
+      "key": "sfsymbols_molniya",
+      "name": "Молния",
+      "pack": "sfsymbols",
+      "html_fallback": "⚡️",
+      "query": "xray"
+    },
+    "hysteria": {
+      "id": "6024048192234985393",
+      "key": "sfsymbols_krolik",
+      "name": "Кролик",
+      "pack": "sfsymbols",
+      "html_fallback": "🐇",
+      "query": "hysteria"
+    },
+    "awg": {
+      "id": "6019328362479097179",
+      "key": "sfsymbols_shchit_s_kletkami",
+      "name": "Щит с клетками",
+      "pack": "sfsymbols",
+      "html_fallback": "🛡",
+      "query": "awg"
+    },
+    "server": {
+      "id": "6021728265650051545",
+      "key": "sfsymbols_server",
+      "name": "Сервер",
+      "pack": "sfsymbols",
+      "html_fallback": "📟",
+      "query": "server"
+    },
+    "broadcast": {
+      "id": "6021726637857446455",
+      "key": "sfsymbols_megafon",
+      "name": "Мегафон",
+      "pack": "sfsymbols",
+      "html_fallback": "📣",
+      "query": "broadcast"
+    },
+    "draft": {
+      "id": "6023843687367190257",
+      "key": "sfsymbols_novyy_dokument",
+      "name": "Новый документ",
+      "pack": "sfsymbols",
+      "html_fallback": "💾",
+      "query": "draft"
+    },
+    "message": {
+      "id": "6019107055699236857",
+      "key": "sfsymbols_ovalnoe_oblako_soobshcheniya",
+      "name": "Овальное облако сообщения",
+      "pack": "sfsymbols",
+      "html_fallback": "💬",
+      "query": "message"
+    },
+    "reply": {
+      "id": "5807899225714858124",
+      "key": "sfsymbols_vernutsya_izognutoy_strelkoy",
+      "name": "Вернуться изогнутой стрелкой",
+      "pack": "sfsymbols",
+      "html_fallback": "⬅️",
+      "query": "reply"
+    },
+    "incident": {
+      "id": "6019102674832595118",
+      "key": "sfsymbols_treugolnik_s_vosklitsaniem",
+      "name": "Треугольник с восклицанием",
+      "pack": "sfsymbols",
+      "html_fallback": "⚠️",
+      "query": "incident"
+    },
+    "sos": {
+      "id": "6021798595739523148",
+      "key": "sfsymbols_nadpis_sos",
+      "name": "Надпись SOS",
+      "pack": "sfsymbols",
+      "html_fallback": "🆘",
+      "query": "sos"
+    },
+    "repaired": {
+      "id": "6021401276904905698",
+      "key": "sfsymbols_otvyortka_i_klyuch",
+      "name": "Отвёртка и ключ",
+      "pack": "sfsymbols",
+      "html_fallback": "🛠",
+      "query": "repaired"
+    },
+    "ip_change": {
+      "id": "5807760901998125610",
+      "key": "sfsymbols_dve_gorizontalnye_strelki",
+      "name": "Две горизонтальные стрелки",
+      "pack": "sfsymbols",
+      "html_fallback": "⬅️",
+      "query": "ip_change"
+    },
+    "dns": {
+      "id": "6019205852831947754",
+      "key": "sfsymbols_globus_s_meridianami",
+      "name": "Глобус с меридианами",
+      "pack": "sfsymbols",
+      "html_fallback": "🌐",
+      "query": "dns"
+    },
+    "health_ok": {
+      "id": "6021868492037298942",
+      "key": "sfsymbols_shchit_s_galochkoy",
+      "name": "Щит с галочкой",
+      "pack": "sfsymbols",
+      "html_fallback": "🛡",
+      "query": "health_ok"
+    },
+    "health_bad": {
+      "id": "6019548599812103366",
+      "key": "sfsymbols_shchit_s_krestikom",
+      "name": "Щит с крестиком",
+      "pack": "sfsymbols",
+      "html_fallback": "🛡",
+      "query": "health_bad"
+    },
+    "limit": {
+      "id": "6026248173268243634",
+      "key": "sfsymbols_spidometr",
+      "name": "Спидометр",
+      "pack": "sfsymbols",
+      "html_fallback": "🎛",
+      "query": "limit"
+    },
+    "schedule": {
+      "id": "6023880246128810031",
+      "key": "sfsymbols_kalendarnaya_setka",
+      "name": "Календарная сетка",
+      "pack": "sfsymbols",
+      "html_fallback": "📅",
+      "query": "schedule"
+    },
+    "stop": {
+      "id": "5807622114424924272",
+      "key": "sfsymbols_stop_v_kruge",
+      "name": "Стоп в круге",
+      "pack": "sfsymbols",
+      "html_fallback": "⏹",
+      "query": "stop"
+    },
+    "pause": {
+      "id": "5807945302124012062",
+      "key": "sfsymbols_pauza",
+      "name": "Пауза",
+      "pack": "sfsymbols",
+      "html_fallback": "⏸",
+      "query": "pause"
+    },
+    "play": {
+      "id": "5807414083388971488",
+      "key": "sfsymbols_vosproizvedenie",
+      "name": "Воспроизведение",
+      "pack": "sfsymbols",
+      "html_fallback": "▶️",
+      "query": "play"
+    },
+    "group": {
+      "id": "6021791869820738130",
+      "key": "sfsymbols_dva_cheloveka_s_razvedyonnymi_rukami",
+      "name": "Два человека с разведёнными руками",
+      "pack": "sfsymbols",
+      "html_fallback": "👥",
+      "query": "group"
+    },
+    "history": {
+      "id": "6035297458907519073",
+      "key": "sfsymbols_istoriya_vremeni",
+      "name": "История времени",
+      "pack": "sfsymbols",
+      "html_fallback": "⏰",
+      "query": "history"
+    }
+  },
+  "catalog_version": "2026-10-03",
+  "notes": "Основной пак — sfsymbols (линейные монохромные иконки в стиле iOS, ближе всего к исходным иконкам бота). Исходные роли (vpn, home, devices, ...) — из пака tgiosicons, не из этого каталога."
+}

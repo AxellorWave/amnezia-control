@@ -16,17 +16,49 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from .. import docker_util
 from ..config import DNS1, DNS2, KEEPALIVE, MTU, SERVER_NAME, VPN_HOST
 
-CONTAINER = os.getenv("CONTAINER", "amnezia-awg2")
-CONF_DIR = os.getenv("CONF_DIR", "/opt/amnezia/awg")
-IFACE = os.getenv("IFACE", "awg0")
-WG_BIN = os.getenv("WG_BIN", "awg")
-WG_QUICK_BIN = os.getenv("WG_QUICK_BIN", "awg-quick")
+# Контейнер, каталог и утилиты определяются автоматически (detect.py) по найденному
+# контейнеру Amnezia; переменные окружения — только чтобы задать их явно.
+ENV_FIXED = bool(os.getenv("CONTAINER", "").strip())
+CONTAINER = os.getenv("CONTAINER", "").strip() or "amnezia-awg2"
+CONF_DIR = os.getenv("CONF_DIR", "").strip() or "/opt/amnezia/awg"
+IFACE = os.getenv("IFACE", "").strip() or "awg0"
+WG_BIN = os.getenv("WG_BIN", "").strip() or "awg"
+WG_QUICK_BIN = os.getenv("WG_QUICK_BIN", "").strip() or "awg-quick"
 SERVER_CONF = f"{CONF_DIR}/{IFACE}.conf"
+CONTAINERS = ("amnezia-awg2", "amnezia-awg")       # AWG 2.0 и старый AWG
 # параметры [Interface] сервера, которые НЕ переносятся в конфиг клиента
 SERVER_ONLY = {"address", "listenport", "privatekey", "postup", "postdown", "preup",
                "predown", "saveconfig", "table", "mtu", "dns", "fwmark"}
 
 wg_lock = asyncio.Lock()
+
+
+def configure(container: str | None = None, conf_dir: str | None = None, iface: str | None = None,
+              wg_bin: str | None = None, wg_quick_bin: str | None = None) -> None:
+    """Задать контейнер AWG и пути (явные значения из env имеют приоритет)."""
+    global CONTAINER, CONF_DIR, IFACE, WG_BIN, WG_QUICK_BIN, SERVER_CONF
+    env = lambda k: os.getenv(k, "").strip()
+    CONTAINER = env("CONTAINER") or container or CONTAINER
+    CONF_DIR = env("CONF_DIR") or conf_dir or CONF_DIR
+    IFACE = env("IFACE") or iface or IFACE
+    WG_BIN = env("WG_BIN") or wg_bin or WG_BIN
+    WG_QUICK_BIN = env("WG_QUICK_BIN") or wg_quick_bin or WG_QUICK_BIN
+    SERVER_CONF = f"{CONF_DIR}/{IFACE}.conf"
+
+
+def autodetect(container: str) -> dict:
+    """Определить внутри запущенного контейнера: awg0.conf или wg0.conf, awg или wg."""
+    out = docker_util.dexec(container, (
+        "d=/opt/amnezia/awg; "
+        "if [ -f $d/awg0.conf ]; then echo iface=awg0; elif [ -f $d/wg0.conf ]; then echo iface=wg0; fi; "
+        "if command -v awg >/dev/null 2>&1; then echo bin=awg; else echo bin=wg; fi; "
+        "if command -v awg-quick >/dev/null 2>&1; then echo quick=awg-quick; else echo quick=wg-quick; fi"))
+    kv_ = dict(line.split("=", 1) for line in out.split() if "=" in line)
+    res = {"container": container, "conf_dir": "/opt/amnezia/awg",
+           "iface": kv_.get("iface") or ("awg0" if container == "amnezia-awg2" else "wg0"),
+           "wg_bin": kv_.get("bin", "awg"), "wg_quick_bin": kv_.get("quick", "awg-quick")}
+    configure(**res)
+    return res
 
 
 def dexec(cmd: str, stdin: str | None = None) -> str:
