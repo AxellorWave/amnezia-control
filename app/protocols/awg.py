@@ -170,8 +170,17 @@ def read_clients_table() -> list:
         return []
 
 
+def snapshot_server(info: dict | None = None) -> None:
+    """Копия awg0.conf и clientsTable перед записью (data/backups/awg/<ts>/)."""
+    from ..snapshots import snapshot
+    text = info["text"] if info else read_file(SERVER_CONF, "")
+    snapshot("awg", {f"{IFACE}.conf": text,
+                     "clientsTable": read_file(f"{CONF_DIR}/clientsTable", "[]")})
+
+
 def add_peer(name: str) -> dict:
     info = server_info()
+    snapshot_server(info)
     priv, pub = gen_keypair()
     psk = info["psk"] or b64(os.urandom(32))
     ip = next_free_ip(info)
@@ -190,6 +199,7 @@ def add_peer(name: str) -> dict:
 
 def remove_peer(pub: str) -> None:
     info = server_info()
+    snapshot_server(info)
     out = []
     for name, lines in split_sections(info["text"]):
         if name == "[peer]" and section_kv(lines).get("PublicKey") == pub:
