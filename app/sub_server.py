@@ -30,7 +30,7 @@ _runners: list[web.AppRunner] = []
 # схемы приложений для кнопок «Открыть в …» (Telegram не пускает такие схемы в кнопки
 # напрямую, поэтому кнопка ведёт на /open/<app>/<token>, а страница перенаправляет)
 APPS = {
-    "happ": ("Happ", "happ://add/{url}"),
+    "happ": ("Happ", "happ://add/{raw}"),             # Happ не раскодирует %-escape в адресе
     "v2raytun": ("v2RayTun", "v2raytun://import/{url}"),
     "hiddify": ("Hiddify", "hiddify://import/{url}#{name}"),
     "incy": ("Incy", "incy://add/{url}"),            # docs.incy.cc/en/deep-links
@@ -243,7 +243,7 @@ async def open_handler(request: web.Request) -> web.Response:
     if not app or not await asyncio.to_thread(user_by_token, token):
         return web.Response(status=404, text="Not Found")
     title, tpl = app
-    target = tpl.format(url=urllib.parse.quote(sub_url(token), safe=""),
+    target = tpl.format(url=urllib.parse.quote(sub_url(token), safe=""), raw=sub_url(token),
                         name=urllib.parse.quote(SERVER_NAME))
     t = html.escape(target, quote=True)
     page = (f"<!doctype html><html lang=ru><head><meta charset=utf-8>"
