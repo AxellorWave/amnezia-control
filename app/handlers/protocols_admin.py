@@ -14,7 +14,8 @@ from .. import detect, hostfw, ports
 from ..access import is_admin
 from ..db import db, now
 from ..progress import Progress
-from ..protocols import awg, awg_install
+from ..protocols import awg, awg_install, xray
+from ..protocols.xray import XRAY
 from ..ui import btn, em, esc, kb, kv, show, table
 from .admin import admin_only
 
@@ -64,7 +65,7 @@ def protocols_view() -> tuple[str, InlineKeyboardMarkup]:
         e = st.get(pid)
         rows_t.append([f"{em(PROTO_ICON[pid])} <b>{title}</b>", state_html(e),
                        esc(ORIGIN_TEXT.get(e["origin"], "")) if e else "—",
-                       fmt_ports(e["ports"]) if e else "—",
+                       fmt_ports(e["ports"] or protocol_ports(pid)) if e else "—",
                        clients_count(pid) if e else "—"])
         if e:
             rows.append([btn(f"{title}", f"proto:card:{pid}", icon=PROTO_ICON[pid])])
@@ -99,11 +100,13 @@ def protocol_card(pid: str) -> tuple[str, InlineKeyboardMarkup]:
                     ("Откуда", esc(ORIGIN_TEXT.get(e["origin"], e["origin"]))),
                     (f"{em('server')} Контейнер", f"<code>{esc(e['container'])}</code>"),
                     ("Образ", f"<code>{esc(e['image'])}</code>"),
-                    ("Порты", fmt_ports(e["ports"])),
+                    ("Порты", fmt_ports(e["ports"] or protocol_ports(pid))),
                     (f"{em('users')} Клиентов", clients_count(pid))])
         if e.get("error"):
             text += f"<blockquote>{em('warn')} <code>{esc(e['error'])}</code></blockquote>"
     rows = []
+    if pid == "xray" and e:
+        rows.append([btn("Обновить Xray", "pxu", icon="download")])
     if e and e["ports"] or protocol_ports(pid):
         rows.append([btn("Открыть порты в файрволе хоста", f"pfw:{pid}", icon="lock")])
     rows.append([btn("Протоколы", "proto", icon="back")])
@@ -159,7 +162,42 @@ WIZARDS: dict[str, dict] = {
              "default": awg_install.DEFAULT_PORT},
         ],
     },
+    "xray": {
+        "title": "VLESS (Xray)",
+        "about": ("Оригинальный XTLS/Xray-core (<code>ghcr.io/xtls/xray-core</code>, версия "
+                  "зафиксирована). Основной вход — VLESS + REALITY + Vision по TCP, запасной — "
+                  "VLESS + XHTTP + REALITY на отдельном порту. Клиенты — из базы бота, ссылки "
+                  "попадут в «Мою подписку»."),
+        "hint": ("Цель REALITY (SNI) — чужой сайт, под который маскируется сервер. Нужны TLS 1.3 "
+                 "и h2. Лучше сайт в той же сети или дата-центре, что и VPS, а не крупные вроде "
+                 "microsoft.com или google.com. «Блок RU» — запрет выхода через VPN на российские "
+                 "домены и IP: так сервер не светится в российских сервисах и не мешает им."),
+        "fields": [
+            {"key": "port", "label": "Порт VLESS", "kind": "port", "proto": "tcp", "default": 443},
+            {"key": "sni", "label": "Цель REALITY (SNI)", "kind": "text", "default": "",
+             "prompt": "Пришли домен сайта для REALITY, например <code>www.example.com</code>.",
+             "validate": xray.valid_domain, "invalid": "Нужен домен, например www.example.com."},
+            {"key": "xhttp", "label": "Запасной вход XHTTP", "kind": "bool", "default": True},
+            {"key": "xhttp_port", "label": "Порт XHTTP", "kind": "port", "proto": "tcp",
+             "default": 8443, "when": "xhttp"},
+            {"key": "block_ru", "label": "Блок RU-доменов и IP", "kind": "bool", "default": True},
+        ],
+        "precheck": lambda p: xray_precheck(p),
+    },
 }
+
+
+def xray_precheck(p: dict) -> list[str]:
+    if not p.get("sni"):
+        return [f"{em('error')} не задана цель REALITY (SNI)"]
+    probs = []
+    if p.get("xhttp") and int(p["xhttp_port"]) == int(p["port"]):
+        probs.append(f"{em('error')} порты VLESS и XHTTP совпадают")
+    t = xray.check_target(p["sni"])
+    if not t["ok"]:
+        probs.append(f"{em('error')} {esc(p['sni'])}: TLS 1.3 — {'да' if t['tls13'] else 'нет'}, "
+                     f"h2 — {'да' if t['h2'] else 'нет'} {esc(t['error'])}")
+    return probs
 
 
 def wiz_defaults(pid: str) -> dict:
@@ -322,6 +360,10 @@ async def cb_install_check(cb: CallbackQuery, state: FSMContext):
 
 
 async def finish_install(pid: str, result: dict) -> None:
+    if result.get("skip_save"):         # протокол сам сохранил настройки (ключи и т.п.)
+        db.execute("UPDATE protocols SET origin='bot', installed_at=? WHERE id=?", (now(), pid))
+        db.commit()
+        return await asyncio.to_thread(detect.refresh)
     db.execute("INSERT OR REPLACE INTO protocols (id, origin, container, settings, installed_at) "
                "VALUES (?, 'bot', ?, ?, ?)",
                (pid, result.get("container", ""), json.dumps(result.get("settings", {})), now()))
@@ -336,6 +378,15 @@ def run_install(pid: str, p: dict, progress) -> dict:
                 "settings": {"port": r["port"], "subnet": r["subnet"], "ports": [("udp", r["port"])]},
                 "summary": [("Порт", f"<code>{r['port']}/udp</code>"),
                             ("Подсеть", f"<code>{r['subnet']}</code>")]}
+    if pid == "xray":
+        st = XRAY.install(p, progress)
+        summary = [("Порт VLESS", f"<code>{st['port']}/tcp</code>"),
+                   ("SNI", f"<code>{esc(st['sni'])}</code>"),
+                   ("XHTTP", f"<code>{st['xhttp_port']}/tcp</code>" if st["xhttp"] else "нет"),
+                   ("Блок RU", "да" if st["block_ru"] else "нет"),
+                   ("Образ", f"<code>{esc(st['image'])}</code>")]
+        return {"container": xray.CONTAINER, "settings": st, "summary": summary,
+                "skip_save": True}
     raise RuntimeError("Установка этого протокола не поддерживается")
 
 
@@ -406,3 +457,54 @@ async def cb_open_firewall_ok(cb: CallbackQuery):
     except Exception as e:
         text = f"<h3>{em('error')} Не получилось</h3><pre>{esc(str(e)[-1500:])}</pre>"
     await show(cb, text, kb([btn("Назад", f"proto:card:{pid}", icon="back")]))
+
+
+# ============================================================ обновление Xray ===
+
+@router.callback_query(F.data == "pxu")
+@admin_only
+async def cb_xray_versions(cb: CallbackQuery):
+    await cb.answer("Смотрю релизы…")
+    cur = (XRAY.settings() or {}).get("image", xray.DEFAULT_IMAGE)
+    try:
+        vers = await asyncio.to_thread(XRAY.latest_versions)
+    except Exception as e:
+        return await show(cb, f"<p>{em('error')} Не удалось получить релизы: "
+                              f"<code>{esc(str(e)[:200])}</code></p>",
+                          kb([btn("Назад", "proto:card:xray", icon="back")]))
+    text = f"<h2>{em('xray')} Обновление Xray</h2>" + kv([("Сейчас", f"<code>{esc(cur)}</code>")])
+    rows = []
+    for v in vers:
+        tag = v["tag"].lstrip("v")
+        mark = " (текущая)" if cur.endswith(":" + tag) else ""
+        text += (f"<details><summary>{esc(v['tag'])} · {v['date']}{mark}</summary>"
+                 f"<pre>{esc(v['body'])}</pre></details>")
+        if not mark:
+            rows.append([btn(f"Поставить {v['tag']}", f"pxv:{tag}", icon="download")])
+    text += (f"<blockquote>{em('backup')} Перед обновлением config.json сохраняется в "
+             f"data/backups/xray/.</blockquote>")
+    rows.append([btn("Назад", "proto:card:xray", icon="back")])
+    await show(cb, text, kb(*rows))
+
+
+@router.callback_query(F.data.startswith("pxv:"))
+@admin_only
+async def cb_xray_update(cb: CallbackQuery):
+    tag = cb.data[4:]
+    if not all(ch.isalnum() or ch in ".-" for ch in tag):
+        return await cb.answer("Неверная версия", show_alert=True)
+    if job_lock.locked():
+        return await cb.answer("Уже идёт другая операция", show_alert=True)
+    await cb.answer()
+    image = f"{xray.IMAGE_REPO}:{tag}"
+    async with job_lock:
+        prog = Progress(cb.message, f"{em('download')} Обновление Xray до {tag}")
+        await prog.show()
+        try:
+            await asyncio.to_thread(XRAY.update_image, image, prog)
+        except Exception as e:
+            log.exception("xray update failed")
+            return await prog.fail(e, kb([btn("Протоколы", "proto", icon="back")]))
+    await asyncio.to_thread(detect.refresh)
+    await prog.show(f"<p>{em('ok')} Xray обновлён: <code>{esc(image)}</code></p>",
+                    kb([btn("Протоколы", "proto", icon="protocols")]))

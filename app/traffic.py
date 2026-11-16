@@ -91,10 +91,41 @@ def drop_device(dev_id: int) -> None:
         db.commit()
 
 
+ONLINE_NOW: dict[str, set[int]] = {}      # протокол -> кто онлайн по последнему опросу
+
+
+def account_sub_traffic() -> None:
+    """Прирост трафика Xray / Hysteria2 по людям (их API отдают и сбрасывают счётчики)."""
+    from .protocols import registry
+    for pid, proto in registry.SUB_PROTOCOLS.items():
+        try:
+            st = proto.stats()
+        except Exception as e:
+            log.debug("%s stats failed: %s", pid, e)
+            continue
+        add_user_traffic(pid, {cid: (v["rx"], v["tx"]) for cid, v in st.items()})
+        online = {cid for cid, v in st.items() if v.get("online")}
+        ONLINE_NOW[pid] = online
+        if online:
+            mark_online(online)
+
+
+def online_users() -> set[int]:
+    """Кто сейчас онлайн в любом протоколе (AWG — по устройствам, остальные — из API)."""
+    res = set().union(*ONLINE_NOW.values()) if ONLINE_NOW else set()
+    stats = awg.peer_stats()
+    for d in db.execute("SELECT chat_id, pub FROM devices"):
+        st = stats.get(d["pub"])
+        if st and st["hs"] and time.time() - st["hs"] < ONLINE_SEC:
+            res.add(d["chat_id"])
+    return res
+
+
 async def traffic_loop() -> None:
     while True:
-        try:
-            await asyncio.to_thread(account_traffic)
-        except Exception as e:
-            log.warning("traffic accounting failed: %s", e)
+        for job in (account_traffic, account_sub_traffic):
+            try:
+                await asyncio.to_thread(job)
+            except Exception as e:
+                log.warning("traffic accounting failed: %s", e)
         await asyncio.sleep(TRAFFIC_EVERY)

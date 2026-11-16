@@ -32,3 +32,13 @@ DESKTOP_URL = "https://github.com/amnezia-vpn/amnezia-client/releases/latest"
 DESKTOP_SITE_URL = "https://amnezia.org/ru/downloads"
 
 ONLINE_SEC = 180
+
+# сервер подписок (HTTP(S) в том же процессе) и auth-хук Hysteria2 (только 127.0.0.1)
+SUB_HOST = os.getenv("SUB_HOST", "").strip() or VPN_HOST
+SUB_PORT = int(os.getenv("SUB_PORT", "8443"))
+SUB_LISTEN = os.getenv("SUB_LISTEN", "0.0.0.0").strip()
+HY2_AUTH_PORT = int(os.getenv("HY2_AUTH_PORT", "18081"))
+HWID_REQUIRED = _flag("HWID_REQUIRED", "0")
+# резервные копии: полная копия админам раз в N дней (0 — выключено), хранить последние N
+BACKUP_EVERY_DAYS = float(os.getenv("BACKUP_EVERY_DAYS", "0") or 0)
+BACKUP_KEEP = int(os.getenv("BACKUP_KEEP", "7"))

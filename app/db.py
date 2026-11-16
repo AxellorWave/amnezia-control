@@ -125,6 +125,11 @@ def ensure_creds(chat_id: int) -> sqlite3.Row:
     return get_user(chat_id)
 
 
+def active_user_ids() -> list[int]:
+    """Люди с доступом (одобренные; админы одобряются при первом /start)."""
+    return [r[0] for r in db.execute("SELECT chat_id FROM users WHERE status='approved'")]
+
+
 def touch_bot(chat_id: int) -> None:
     db.execute("UPDATE users SET last_seen_bot=?, blocked_bot=0 WHERE chat_id=?", (now(), chat_id))
     db.commit()
