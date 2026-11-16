@@ -3,9 +3,12 @@ services:
     build: .
     container_name: amnezia-bot
     restart: unless-stopped
+    # сеть хоста: бот видит API Xray и Hysteria на 127.0.0.1, а Hysteria — auth-хук бота;
+    # сервер подписок слушает SUB_PORT прямо на хосте
+    network_mode: host
     env_file: .env
     environment:
       - DB_PATH=/data/bot.db
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock   # доступ к контейнеру Амнезии
-      - ./data:/data                                # база пользователей и устройств
+      - /var/run/docker.sock:/var/run/docker.sock   # управление контейнерами VPN
+      - ./data:/data                                # база, конфиги протоколов, копии

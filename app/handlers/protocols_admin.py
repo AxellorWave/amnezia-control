@@ -10,7 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
-from .. import detect, ports
+from .. import detect, hostfw, ports
 from ..access import is_admin
 from ..db import db, now
 from ..progress import Progress
@@ -103,7 +103,23 @@ def protocol_card(pid: str) -> tuple[str, InlineKeyboardMarkup]:
                     (f"{em('users')} Клиентов", clients_count(pid))])
         if e.get("error"):
             text += f"<blockquote>{em('warn')} <code>{esc(e['error'])}</code></blockquote>"
-    return text, kb([btn("Протоколы", "proto", icon="back")])
+    rows = []
+    if e and e["ports"] or protocol_ports(pid):
+        rows.append([btn("Открыть порты в файрволе хоста", f"pfw:{pid}", icon="lock")])
+    rows.append([btn("Протоколы", "proto", icon="back")])
+    return text, kb(*rows)
+
+
+def protocol_ports(pid: str) -> list[tuple[str, int]]:
+    """Порты протокола: опубликованные (AWG) или из настроек (контейнеры с --network host)."""
+    e = detect.get(pid)
+    if e and e["ports"]:
+        return list(e["ports"])
+    row = db.execute("SELECT settings FROM protocols WHERE id=?", (pid,)).fetchone()
+    try:
+        return [tuple(x) for x in json.loads(row["settings"]).get("ports", [])] if row else []
+    except (TypeError, ValueError):
+        return []
 
 
 @router.callback_query(F.data.in_({"proto", "proto:refresh"}))
@@ -316,8 +332,8 @@ async def finish_install(pid: str, result: dict) -> None:
 def run_install(pid: str, p: dict, progress) -> dict:
     if pid == "awg":
         r = awg_install.install(int(p["port"]), progress)
-        return {"container": awg_install.CONTAINER, "settings": {"port": r["port"],
-                                                                 "subnet": r["subnet"]},
+        return {"container": awg_install.CONTAINER,
+                "settings": {"port": r["port"], "subnet": r["subnet"], "ports": [("udp", r["port"])]},
                 "summary": [("Порт", f"<code>{r['port']}/udp</code>"),
                             ("Подсеть", f"<code>{r['subnet']}</code>")]}
     raise RuntimeError("Установка этого протокола не поддерживается")
@@ -344,7 +360,49 @@ async def cb_install_go(cb: CallbackQuery, state: FSMContext, bot: Bot):
             log.exception("install %s failed", pid)
             await asyncio.to_thread(detect.refresh)
             return await prog.fail(e, kb([btn("Протоколы", "proto", icon="back")]))
+    fw = await asyncio.to_thread(hostfw.status)
+    rows = []
+    note = result.get("note", "")
+    if fw["active"]:
+        note += (f"<blockquote>{em('lock')} На сервере включён {fw['kind']} — открой порты "
+                 f"кнопкой ниже, иначе клиенты не подключатся.</blockquote>")
+        rows.append([btn("Открыть порты", f"pfw:{pid}", style="primary", icon="lock")])
+    rows.append([btn("Протоколы", "proto", icon="protocols")])
     await prog.show(f"<h3>{em('party')} {w['title']} установлен</h3>"
-                    + kv(result.get("summary", [])) + result.get("note", ""),
-                    kb([btn("Протоколы", "proto", icon="protocols")]))
+                    + kv(result.get("summary", [])) + note, kb(*rows))
     log.info("installed %s: %s", pid, result.get("settings"))
+
+
+@router.callback_query(F.data.startswith("pfw:"))
+@admin_only
+async def cb_open_firewall(cb: CallbackQuery):
+    pid = cb.data[4:]
+    wanted = protocol_ports(pid)
+    if not wanted:
+        return await cb.answer("Порты протокола неизвестны", show_alert=True)
+    await cb.answer("Проверяю файрвол…")
+    st = await asyncio.to_thread(hostfw.status)
+    plist = ", ".join(f"{p}/{proto}" for proto, p in wanted)
+    if not st["active"]:
+        return await show(cb, f"<h3>{em('lock')} Файрвол хоста</h3>"
+                              f"<p>ufw/firewalld не включены — порты {plist} не закрыты на самом "
+                              f"сервере.</p><blockquote>{em('idea')} Если не подключается — проверь "
+                              f"файрвол в панели хостинга (Security groups и т.п.).</blockquote>",
+                          kb([btn("Назад", f"proto:card:{pid}", icon="back")]))
+    await show(cb, f"<h3>{em('lock')} Открыть порты в {st['kind']}?</h3>"
+                   f"<p>Будут разрешены: <code>{plist}</code>.</p>",
+               kb([btn("Открыть", f"pfwok:{pid}", style="success", icon="ok"),
+                   btn("Отмена", f"proto:card:{pid}", icon="no")]))
+
+
+@router.callback_query(F.data.startswith("pfwok:"))
+@admin_only
+async def cb_open_firewall_ok(cb: CallbackQuery):
+    pid = cb.data[6:]
+    await cb.answer("Открываю…")
+    try:
+        out = await asyncio.to_thread(hostfw.open_ports, protocol_ports(pid))
+        text = f"<h3>{em('ok')} Готово</h3><pre>{esc(out[-1500:])}</pre>"
+    except Exception as e:
+        text = f"<h3>{em('error')} Не получилось</h3><pre>{esc(str(e)[-1500:])}</pre>"
+    await show(cb, text, kb([btn("Назад", f"proto:card:{pid}", icon="back")]))
