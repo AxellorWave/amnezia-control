@@ -140,3 +140,22 @@ def test_add_custom_rejects_empty(monkeypatch):
         routes.add_custom("X", "games", "просто текст")
     with pytest.raises(ValueError):
         routes.add_custom("  ", "games", "example.com")
+
+
+def test_shared_cdn_domains_filtered_from_sources(monkeypatch, tmp_path):
+    assert routes.is_shared("google.com") and routes.is_shared("d1.cloudfront.net")
+    assert not routes.is_shared("claude.ai") and not routes.is_shared("notgoogle.com")
+    monkeypatch.setattr(routes, "cache_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(routes, "fetch", lambda url: "claude.ai\napi.anthropic.com\n"
+                                                     "google.com\nx.amazonaws.com\n")
+    e = routes.refresh_service("claude", do_resolve=False)
+    assert "claude.ai" in e["domains"] and "api.anthropic.com" in e["domains"]
+    assert "google.com" not in e["domains"] and "x.amazonaws.com" not in e["domains"]
+    with routes._lock:
+        routes._mem.pop("claude", None)
+
+
+def test_every_topic_service_exists():
+    for _, _, keys in routes.TOPICS:
+        for k in keys:
+            assert routes.SERVICES[k]["title"]

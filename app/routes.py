@@ -9,7 +9,8 @@
 встроенный каталог ниже; поверх — правки админа из таблицы route_overrides):
   * itdoginfo/allow-domains — домены и подсети сервисов
     https://github.com/itdoginfo/allow-domains (Services/*.lst, Subnets/IPv4/*.lst);
-  * iplist.opencck.org — домены и CIDR по сайту (format=text);
+  * iplist.opencck.org (и beta.iplist.opencck.org) — домены и CIDR по сайту (format=text);
+    этот же источник рекомендует AmneziaVPN в инструкции по раздельному туннелированию;
   * core.telegram.org/resources/cidr.txt — официальные подсети Telegram;
   * ipdeny.com — агрегированные подсети РФ (для «Всех сайтов .ru»).
 
@@ -52,6 +53,20 @@ AWG_WARN_ROUTES = 1500            # больше — некоторые клие
 
 ITDOG = "https://raw.githubusercontent.com/itdoginfo/allow-domains/main"
 OPENCCK = "https://iplist.opencck.org/?format=text&data={data}&site={site}"
+OPENCCK_BETA = "https://beta.iplist.opencck.org/?format=text&data={data}&site={site}"
+
+# Общие CDN и облака: в списках сервисов из iplist встречаются, но маршрутизировать их
+# целиком нельзя — через VPN (или мимо него) пойдёт половина интернета. Из источников
+# такие домены отбрасываются; у встроенных доменов сервиса и у правок админа — остаются.
+SHARED_DOMAINS = (
+    "google.com", "googleapis.com", "gstatic.com", "googletagmanager.com", "google-analytics.com",
+    "doubleclick.net", "amazonaws.com", "cloudfront.net", "a2z.com", "media-amazon.com",
+    "akamai.net", "akamaihd.net", "akamaized.net", "akamaitechnologies.com", "akamaiedge.net",
+    "edgekey.net", "edgesuite.net", "fastly.net", "fastly-edge.com", "cloudflare.net",
+    "cloudflare.com", "pacloudflare.com", "azureedge.net", "azurefd.net", "windows.net",
+    "cloudfunctions.net", "app.link", "intercom.io", "zendesk.com", "onetrust.com",
+    "splunkcloud.com", "prismic.io", "sentry.io", "apple.com", "microsoft.com")
+
 
 PRIVATE_V4 = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16",
               "127.0.0.0/8", "100.64.0.0/10", "224.0.0.0/4", "255.255.255.255/32")
@@ -72,9 +87,14 @@ def _itdog(name: str, subnets: bool = False) -> list[tuple[str, str]]:
     return src
 
 
-def _cck(site: str) -> list[tuple[str, str]]:
-    return [("domains", OPENCCK.format(data="domains", site=site)),
-            ("cidr", OPENCCK.format(data="cidr4", site=site))]
+def _cck(site: str, url: str = OPENCCK) -> list[tuple[str, str]]:
+    return [("domains", url.format(data="domains", site=site)),
+            ("cidr", url.format(data="cidr4", site=site))]
+
+
+def _cckb(site: str) -> list[tuple[str, str]]:
+    """Бета iplist: там сервисы, которых нет в основном (GitHub, Roblox, Steam, Reddit…)."""
+    return _cck(site, OPENCCK_BETA)
 
 
 SERVICES: dict[str, dict] = {
@@ -105,7 +125,7 @@ SERVICES: dict[str, dict] = {
         "telegram.org", "t.me", "telegram.me", "telegra.ph", "telesco.pe", "tdesktop.com",
         "cdn-telegram.org", "graph.org", "tx.me"], "cidrs": TG_CIDR,
         "sources": _itdog("telegram", subnets=True)
-        + [("cidr", "https://core.telegram.org/resources/cidr.txt")]},
+        + [("cidr", "https://core.telegram.org/resources/cidr.txt")] + _cck("telegram.org")},
     "whatsapp": {"title": "WhatsApp", "domains": [
         "whatsapp.com", "whatsapp.net", "wa.me", "whatsapp.biz"],
         "sources": _itdog("meta", subnets=True) + _cck("whatsapp.com")},
@@ -124,29 +144,30 @@ SERVICES: dict[str, dict] = {
     "gemini": {"title": "Gemini / AI Studio", "domains": [
         "gemini.google.com", "aistudio.google.com", "generativelanguage.googleapis.com",
         "notebooklm.google.com", "bard.google.com", "makersuite.google.com"],
-        "sources": []},
+        "sources": _cck("aistudio.google.com") + _cck("notebooklm.google") + _cckb("google@gemini")},
     "copilot": {"title": "Microsoft Copilot", "domains": [
-        "copilot.microsoft.com", "sydney.bing.com", "edgeservices.bing.com"], "sources": []},
+        "copilot.microsoft.com", "sydney.bing.com", "edgeservices.bing.com"],
+                "sources": _cck("copilot")},
     "perplexity": {"title": "Perplexity", "domains": ["perplexity.ai", "pplx.ai"],
                    "sources": _cck("perplexity.ai")},
     "grok": {"title": "Grok", "domains": ["grok.com", "x.ai"], "sources": _cck("grok.com")},
     # --- Игры
     "roblox": {"title": "Roblox", "domains": [
         "roblox.com", "rbxcdn.com", "rbx.com", "robloxlabs.com", "roblox.qq.com"],
-        "sources": _itdog("roblox") + _cck("roblox.com")},
+        "sources": _itdog("roblox") + _cckb("roblox.com")},
     "supercell": {"title": "Supercell (Brawl Stars, Clash)", "domains": [
         "supercell.com", "supercellid.com", "supercell.net", "brawlstars.com",
-        "clashofclans.com", "clashroyale.com"], "sources": _cck("supercell.com")},
+        "clashofclans.com", "clashroyale.com"], "sources": _cckb("brawlstars.com")},
     "playstation": {"title": "PlayStation Network", "domains": [
         "playstation.com", "playstation.net", "sonyentertainmentnetwork.com"],
-        "sources": _cck("playstation.com")},
+        "sources": []},
     # --- Разработка
     "docker": {"title": "Docker Hub", "domains": [
         "docker.com", "docker.io", "registry-1.docker.io", "production.cloudflare.docker.com",
-        "hub.docker.com", "dockerhub.com"], "sources": _cck("docker.com")},
+        "hub.docker.com", "dockerhub.com"], "sources": []},
     "github": {"title": "GitHub", "domains": [
         "github.com", "githubusercontent.com", "github.io", "githubassets.com", "ghcr.io",
-        "github.dev"], "sources": _cck("github.com")},
+        "github.dev"], "sources": _cckb("github.com")},
     "jetbrains": {"title": "JetBrains", "domains": ["jetbrains.com", "jetbrains.space",
                                                    "intellij.net"],
                   "sources": _cck("jetbrains.com")},
@@ -159,17 +180,91 @@ SERVICES: dict[str, dict] = {
     "patreon": {"title": "Patreon", "domains": ["patreon.com", "patreonusercontent.com"],
                 "sources": _cck("patreon.com")},
     "medium": {"title": "Medium", "domains": ["medium.com"], "sources": _cck("medium.com")},
+    # --- Нейросети
+    "claude": {"title": "Claude", "domains": ["claude.ai", "anthropic.com", "claude.com", "clau.de", "claude.app", "claude.new", "claude.site", "claudemcpclient.com", "claudemcpcontent.com", "claudepages.dev"],
+        "sources": _cck("claude.ai")},
+    "deepseek": {"title": "DeepSeek", "domains": ["deepseek.com"],
+        "sources": _cck("deepseek.com")},
+    "metaai": {"title": "Meta AI", "domains": ["meta.ai", "meta.com", "facebook.com", "fbcdn.net"],
+        "sources": _cck("meta.ai")},
+    "elevenlabs": {"title": "ElevenLabs", "domains": ["elevenlabs.io"],
+        "sources": _cck("elevenlabs.io")},
+    "cursor": {"title": "Cursor", "domains": ["cursor.com", "cursor.sh", "cursor-cdn.com", "cursorapi.com", "cursorvm.com", "todesktop.com"],
+        "sources": _cck("cursor.com")},
+    # --- Видео
+    "netflix": {"title": "Netflix", "domains": ["netflix.com", "fast.com", "nflxext.com", "nflxvideo.net", "netflix.ca", "netflix.com.au", "netflix.net", "netflixinvestor.com", "netflixstudios.com", "netflixtechblog.com"],
+        "sources": _cck("netflix.com")},
+    "twitch": {"title": "Twitch", "domains": ["twitch.tv", "twitchcdn.net", "live-video.net", "jtvnw.net", "ext-twitch.tv"],
+        "sources": _cckb("twitch.tv")},
+    "crunchyroll": {"title": "Crunchyroll", "domains": ["crunchyroll.com", "vrv.co"],
+        "sources": _cck("crunchyroll.com")},
+    # --- Соцсети
+    "reddit": {"title": "Reddit", "domains": ["reddit.com", "redditmedia.com", "redd.it", "redditspace.com", "redditblog.com", "reddithelp.com", "redditinc.com", "redditmail.com"],
+        "sources": _cckb("reddit.com")},
+    "snapchat": {"title": "Snapchat", "domains": ["snapchat.com", "addlive.io", "sc-cdn.net", "feelinsonice.com", "snap.com", "sc-corp.net", "sc-gw.com", "sc-jpl.com", "sc-prod.net", "sc-static.net"],
+        "sources": _cck("snapchat.com")},
+    "quora": {"title": "Quora", "domains": ["quora.com", "quoracdn.net"],
+        "sources": _cck("quora.com")},
+    "bluesky": {"title": "Bluesky", "domains": ["bsky.app", "bsky.social", "bsky.network"],
+        "sources": _cckb("bsky.app")},
+    # --- Игры
+    "steam": {"title": "Steam", "domains": ["steampowered.com", "steamstatic.com", "steamserver.net", "steam-api.com", "steam.tv", "steamcommunity.com"],
+        "sources": _cckb("steampowered.com")},
+    "epic": {"title": "Epic Games", "domains": ["epicgames.com", "unrealengine.com"],
+        "sources": _cckb("epicgames.com")},
+    "riot": {"title": "League of Legends", "domains": ["leagueoflegends.com", "riotgames.com", "rdatasrv.net", "pvp.net"],
+        "sources": _cckb("leagueoflegends.com")},
+    "chess": {"title": "Chess.com", "domains": ["chess.com", "chesscomfiles.com"],
+        "sources": _cck("chess.com")},
+    "nexusmods": {"title": "Nexus Mods", "domains": ["nexusmods.com", "nexus-cdn.com"],
+        "sources": _cck("nexusmods.com")},
+    # --- Работа и учёба
+    "notion": {"title": "Notion", "domains": ["notion.so", "notion.com", "hellonotion.com", "notionusercontent.com", "notion-media.com", "notion.ai", "notion.dev", "notion.site", "notionup.com", "notion-static.com"],
+        "sources": _cck("notion.so")},
+    "canva": {"title": "Canva", "domains": ["canva.com", "canva-apps.com"],
+        "sources": _cck("canva.com")},
+    "figma": {"title": "Figma", "domains": ["figma.com"],
+        "sources": _cckb("figma.com")},
+    "miro": {"title": "Miro", "domains": ["miro.com", "mirostatic.com"],
+        "sources": _cck("miro.com")},
+    "slack": {"title": "Slack", "domains": ["slack.com", "slack-edge.com", "files-slack-files.com", "slack-files.com", "slack-core.com", "slack-imgs.com", "slack-msgs.com", "slack-redir.net", "slackb.com", "slackcertified.com"],
+        "sources": _cckb("slack.com")},
+    "grammarly": {"title": "Grammarly", "domains": ["grammarly.com", "grammarly.io"],
+        "sources": _cck("grammarly.com")},
+    "deepl": {"title": "DeepL", "domains": ["deepl.com"],
+        "sources": _cck("deepl.com")},
+    "duolingo": {"title": "Duolingo", "domains": ["duolingo.com"],
+        "sources": _cck("duolingo.com")},
+    # --- Разработка
+    "hetzner": {"title": "Hetzner", "domains": ["hetzner.com"],
+        "sources": _cck("hetzner.com")},
+    "digitalocean": {"title": "DigitalOcean", "domains": ["digitalocean.com"],
+        "sources": _cckb("digitalocean.com")},
+    # --- Музыка и прочее
+    "proton": {"title": "Proton (Mail, VPN)", "domains": ["proton.me", "protonmail.com"],
+        "sources": _cck("proton.me")},
+    "deezer": {"title": "Deezer", "domains": ["deezer.com", "dzcdn.net"],
+        "sources": _cck("deezer.com")},
+    "tidal": {"title": "Tidal", "domains": ["tidal.com"],
+        "sources": _cck("tidal.com")},
+    "lastfm": {"title": "Last.fm", "domains": ["last.fm"],
+        "sources": _cck("last.fm")},
+    # --- Новости
+    "media_ru": {"title": "Независимые СМИ", "domains": ["meduza.io", "mdza.io", "novayagazeta.ru", "novayagazeta.eu", "tvrain.ru", "tvrain.tv", "svoboda.org", "zona.media", "mediazona.ca", "theins.ru"],
+        "sources": _cck("meduza.io") + _cck("novayagazeta.ru") + _cck("tvrain.ru") + _cck("svoboda.org") + _cck("zona.media") + _cck("theins.ru") + _cck("istories.media") + _cck("currenttime.tv")},
+    "media_world": {"title": "Зарубежные СМИ", "domains": ["bbc.com", "bbc.co.uk", "bbci.co.uk", "dw.com", "euronews.com"],
+        "sources": _cck("bbc.com") + _cck("dw.com") + _cck("euronews.com")},
     # --- Российские сервисы (обычно — в обход VPN)
     "yandex": {"title": "Яндекс", "domains": [
         "yandex.ru", "ya.ru", "yandex.net", "yastatic.net", "yandex.com", "yandex.by",
         "yandex.kz", "kinopoisk.ru", "dzen.ru", "yandexcloud.net"],
-        "sources": _cck("yandex.ru")},
+        "sources": []},
     "vk": {"title": "VK, Mail.ru, Одноклассники", "domains": [
         "vk.com", "vk.ru", "vkuser.net", "userapi.com", "vk-cdn.net", "mail.ru", "ok.ru",
-        "mycdn.me", "vkvideo.ru", "max.ru"], "sources": _cck("vk.com")},
+        "mycdn.me", "vkvideo.ru", "max.ru"], "sources": []},
     "gosuslugi": {"title": "Госуслуги и госсайты", "domains": [
         "gosuslugi.ru", "nalog.gov.ru", "mos.ru", "pfr.gov.ru", "sfr.gov.ru", "gov.ru"],
-        "sources": _cck("gosuslugi.ru")},
+        "sources": []},
     "banks": {"title": "Банки", "domains": [
         "sberbank.ru", "sber.ru", "tbank.ru", "tinkoff.ru", "vtb.ru", "alfabank.ru",
         "raiffeisen.ru", "gazprombank.ru", "pochtabank.ru", "nspk.ru", "sbp.nspk.ru"],
@@ -184,13 +279,20 @@ SERVICES: dict[str, dict] = {
 }
 
 TOPICS: list[tuple[str, str, list[str]]] = [
-    ("video", "Видео", ["youtube"]),
-    ("social", "Соцсети", ["instagram", "facebook", "twitter", "linkedin", "tiktok"]),
+    ("video", "Видео", ["youtube", "netflix", "twitch", "crunchyroll"]),
+    ("social", "Соцсети", ["instagram", "facebook", "twitter", "linkedin", "tiktok", "reddit",
+                           "snapchat", "quora", "bluesky"]),
     ("messengers", "Мессенджеры", ["telegram", "whatsapp", "discord", "signal", "viber"]),
-    ("ai", "Нейросети", ["openai", "gemini", "copilot", "perplexity", "grok"]),
-    ("games", "Игры", ["roblox", "supercell", "playstation"]),
-    ("dev", "Разработка", ["docker", "github", "jetbrains"]),
-    ("other", "Музыка и прочее", ["spotify", "soundcloud", "patreon", "medium"]),
+    ("ai", "Нейросети", ["openai", "claude", "gemini", "deepseek", "copilot", "perplexity",
+                         "grok", "metaai", "elevenlabs", "cursor"]),
+    ("games", "Игры", ["roblox", "supercell", "playstation", "steam", "epic", "riot", "chess",
+                       "nexusmods"]),
+    ("work", "Работа и учёба", ["notion", "canva", "figma", "miro", "slack", "grammarly",
+                                "deepl", "duolingo"]),
+    ("dev", "Разработка", ["docker", "github", "jetbrains", "hetzner", "digitalocean"]),
+    ("news", "Новости", ["media_ru", "media_world"]),
+    ("other", "Музыка и прочее", ["spotify", "soundcloud", "deezer", "tidal", "lastfm",
+                                  "patreon", "medium", "proton"]),
     ("ru", "Российские сервисы", ["yandex", "vk", "gosuslugi", "banks", "shops", "ru_all"]),
 ]
 TOPIC_OF = {s: t for t, _, svcs in TOPICS for s in svcs}
@@ -223,6 +325,10 @@ def parse_list(text: str) -> tuple[list[str], list[str]]:
         if DOMAIN_RE.match(t) and "." in t:
             domains.append(t)
     return domains, cidrs
+
+
+def is_shared(domain: str) -> bool:
+    return any(domain == s or domain.endswith("." + s) for s in SHARED_DOMAINS)
 
 
 def cache_dir() -> str:
@@ -271,7 +377,7 @@ def refresh_service(key: str, do_resolve: bool = True) -> dict:
             log.debug("routes %s: %s: %s", key, url, e)
             continue
         if kind == "domains":
-            domains += d
+            domains += [x for x in d if not is_shared(x)]
             cidrs += c
         else:
             cidrs += c
@@ -335,6 +441,16 @@ def refresh_all() -> None:
             log.warning("routes refresh %s failed: %s", key, e)
 
 
+def refresh_missing() -> None:
+    """Сервисы, которые ещё ни разу не загружались (новые в каталоге), — не ждать суток."""
+    for key in list(SERVICES):
+        if SERVICES.get(key, {}).get("sources") and not _base_entry(key).get("ts"):
+            try:
+                refresh_service(key)
+            except Exception as e:
+                log.warning("routes refresh %s failed: %s", key, e)
+
+
 def last_update() -> float:
     ts = [_base_entry(k).get("ts", 0) for k in list(SERVICES)]
     return max(ts) if ts else 0
@@ -346,6 +462,8 @@ async def routes_loop() -> None:
     while True:
         if time.time() - last_update() > REFRESH_EVERY - 600:
             await asyncio.to_thread(refresh_all)
+        else:
+            await asyncio.to_thread(refresh_missing)
         await asyncio.sleep(3600)
 
 
