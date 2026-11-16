@@ -328,13 +328,15 @@ docker compose logs --tail 100
 
 | Тема | Сервисы |
 |---|---|
-| 🎬 Видео | YouTube |
-| 👥 Соцсети | Instagram, Facebook, X (Twitter), LinkedIn, TikTok |
+| 🎬 Видео | YouTube, Netflix, Twitch, Crunchyroll |
+| 👥 Соцсети | Instagram, Facebook, X (Twitter), LinkedIn, TikTok, Reddit, Snapchat, Quora, Bluesky |
 | 💬 Мессенджеры | Telegram, WhatsApp, Discord, Signal, Viber |
-| 🧠 Нейросети | ChatGPT / OpenAI, Gemini / AI Studio, Microsoft Copilot, Perplexity, Grok |
-| 🎮 Игры | Roblox, Supercell (Brawl Stars, Clash), PlayStation Network |
-| 👨‍💻 Разработка | Docker Hub, GitHub, JetBrains |
-| 🎵 Музыка и прочее | Spotify, SoundCloud, Patreon, Medium |
+| 🧠 Нейросети | ChatGPT / OpenAI, Claude, Gemini / AI Studio, DeepSeek, Microsoft Copilot, Perplexity, Grok, Meta AI, ElevenLabs, Cursor |
+| 🎮 Игры | Roblox, Supercell (Brawl Stars, Clash), PlayStation Network, Steam, Epic Games, League of Legends, Chess.com, Nexus Mods |
+| 💼 Работа и учёба | Notion, Canva, Figma, Miro, Slack, Grammarly, DeepL, Duolingo |
+| 👨‍💻 Разработка | Docker Hub, GitHub, JetBrains, Hetzner, DigitalOcean |
+| 📰 Новости | Независимые СМИ, Зарубежные СМИ (BBC, DW, Euronews) |
+| 🎵 Музыка и прочее | Spotify, SoundCloud, Deezer, Tidal, Last.fm, Patreon, Medium, Proton |
 | 🇷🇺 Российские сервисы | Яндекс, VK / Mail.ru / Одноклассники, Госуслуги и госсайты, Банки, Маркетплейсы, все сайты `.ru / .рф / .su` |
 
 </details>
@@ -355,7 +357,7 @@ docker compose logs --tail 100
 
 ✨ **Автоматически для Happ и Incy:** выбранные списки приезжают вместе с подпиской (заголовок `routing`) — при обновлении подписки приложение само получает профиль маршрутизации. Слишком большие профили так не отправляются — тогда используйте файл или кнопку «Добавить в …».
 
-Списки берутся из открытых поддерживаемых источников (itdoginfo/allow-domains, iplist.opencck.org, официальные подсети Telegram), обновляются раз в сутки и кешируются в `data/routes/`. Если источник недоступен — используется встроенный каталог доменов.
+Списки берутся из открытых поддерживаемых источников (itdoginfo/allow-domains, iplist.opencck.org и его бета-версия — их же рекомендует AmneziaVPN, официальные подсети Telegram), обновляются раз в сутки и кешируются в `data/routes/`; новые сервисы подгружаются в течение часа после запуска. Если источник недоступен — используется встроенный каталог доменов. Общие домены CDN и облаков (`google.com`, `amazonaws.com`, Akamai, Cloudflare, Fastly и т.п.) из источников отбрасываются, чтобы через VPN не шла половина интернета.
 
 **Свои сервисы** — админка → **Сервисы обхода**: добавить сервис со своими доменами и IP/подсетями в любую тему, дописать или убрать адреса у встроенного сервиса (убранные адреса из источников не вернутся при обновлении), сбросить правки, скрыть ненужный сервис и вернуть его из «Скрытых». Правки хранятся в базе бота (таблица `route_overrides`) и попадают в резервные копии.
 
