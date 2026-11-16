@@ -76,6 +76,7 @@ def admin_menu() -> tuple[str, InlineKeyboardMarkup]:
             [btn("Пользователи", "adm:users", icon="users"),
              btn(f"Заявки ({pending})", "adm:pending", icon="pending")],
             [btn("Из приложения", "adm:app", icon="app"), btn("Дашборд", "adm:dash", icon="status")],
+            [btn("Сервисы обхода", "ra", icon="globe")],
             [btn(f"Отклонённые ({denied})", "adm:denied", icon="denied")],
             [btn("Меню", "menu", icon="back")]]
     return text, kb(*rows)

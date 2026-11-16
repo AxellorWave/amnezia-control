@@ -6,7 +6,7 @@
   "exclude" — всё через VPN, кроме выбранных (обход).
 
 Источники (обновление раз в сутки, кэш в DATA_DIR/routes/, при недоступности —
-встроенный каталог ниже):
+встроенный каталог ниже; поверх — правки админа из таблицы route_overrides):
   * itdoginfo/allow-domains — домены и подсети сервисов
     https://github.com/itdoginfo/allow-domains (Services/*.lst, Subnets/IPv4/*.lst);
   * iplist.opencck.org — домены и CIDR по сайту (format=text);
@@ -282,7 +282,8 @@ def refresh_service(key: str, do_resolve: bool = True) -> dict:
     cidrs = [str(n) for n in collapse(cidrs)][:MAX_CIDRS]
     resolved = []
     if do_resolve and not svc.get("suffix_only"):
-        resolved = resolve(domains)
+        extra = [d for d in svc.get("extra_domains", []) if d not in domains]
+        resolved = resolve(extra + domains)
     entry = {"domains": domains, "cidrs": cidrs, "resolved": resolved, "ts": time.time(),
              "sources": ok}
     os.makedirs(cache_dir(), exist_ok=True)
@@ -295,8 +296,8 @@ def refresh_service(key: str, do_resolve: bool = True) -> dict:
     return entry
 
 
-def get_service(key: str) -> dict:
-    """Данные сервиса: из памяти, из кэша на диске или встроенный каталог."""
+def _base_entry(key: str) -> dict:
+    """Данные сервиса из источников: память, кэш на диске или встроенный каталог."""
     with _lock:
         if key in _mem:
             return _mem[key]
@@ -312,8 +313,22 @@ def get_service(key: str) -> dict:
     return entry
 
 
+def get_service(key: str) -> dict:
+    """Данные сервиса с правками админа: добавленные адреса плюс, убранные минус."""
+    e = _base_entry(key)
+    svc = SERVICES.get(key, {})
+    ex_d, ex_c = set(svc.get("excluded_domains", [])), set(svc.get("excluded_cidrs", []))
+    add_d, add_c = svc.get("extra_domains", []), svc.get("extra_cidrs", [])
+    if not (ex_d or ex_c or add_d or add_c):
+        return e
+    domains = [d for d in dict.fromkeys(add_d + e["domains"]) if d not in ex_d]
+    cidrs = [c for c in dict.fromkeys(add_c + e["cidrs"]) if c not in ex_c]
+    resolved = [r for r in e.get("resolved", []) if r not in ex_c]
+    return dict(e, domains=domains, cidrs=cidrs, resolved=resolved)
+
+
 def refresh_all() -> None:
-    for key in SERVICES:
+    for key in list(SERVICES):
         try:
             refresh_service(key)
         except Exception as e:
@@ -321,7 +336,7 @@ def refresh_all() -> None:
 
 
 def last_update() -> float:
-    ts = [get_service(k).get("ts", 0) for k in SERVICES]
+    ts = [_base_entry(k).get("ts", 0) for k in list(SERVICES)]
     return max(ts) if ts else 0
 
 
@@ -332,6 +347,205 @@ async def routes_loop() -> None:
         if time.time() - last_update() > REFRESH_EVERY - 600:
             await asyncio.to_thread(refresh_all)
         await asyncio.sleep(3600)
+
+
+# =========================================================== правки админа ===
+# Встроенный каталог можно дополнять из админки: свои сервисы, свои домены и подсети
+# у любого сервиса, убрать адреса из источников, скрыть встроенный сервис.
+# Всё хранится в таблице route_overrides и накладывается на каталог при старте и после
+# каждой правки (SERVICES / TOPICS / TOPIC_OF меняются на месте).
+
+BUILTIN_SERVICES = {k: dict(v) for k, v in SERVICES.items()}
+BUILTIN_TOPICS = [(t, title, list(keys)) for t, title, keys in TOPICS]
+MAX_TITLE = 40
+
+db.execute("""CREATE TABLE IF NOT EXISTS route_overrides (key TEXT PRIMARY KEY,
+              custom INTEGER NOT NULL DEFAULT 0, title TEXT, topic TEXT,
+              extra_domains TEXT NOT NULL DEFAULT '[]', extra_cidrs TEXT NOT NULL DEFAULT '[]',
+              excluded_domains TEXT NOT NULL DEFAULT '[]',
+              excluded_cidrs TEXT NOT NULL DEFAULT '[]', hidden INTEGER NOT NULL DEFAULT 0)""")
+db.commit()
+
+LIST_FIELDS = ("extra_domains", "extra_cidrs", "excluded_domains", "excluded_cidrs")
+
+
+def _jl(v) -> list:
+    try:
+        return [str(x) for x in json.loads(v or "[]")]
+    except ValueError:
+        return []
+
+
+def override(key: str) -> dict:
+    r = db.execute("SELECT * FROM route_overrides WHERE key=?", (key,)).fetchone()
+    if not r:
+        return {"key": key, "custom": 0, "title": None, "topic": None, "hidden": 0,
+                **{f: [] for f in LIST_FIELDS}}
+    return {"key": key, "custom": r["custom"], "title": r["title"], "topic": r["topic"],
+            "hidden": r["hidden"], **{f: _jl(r[f]) for f in LIST_FIELDS}}
+
+
+def _save_override(o: dict) -> None:
+    db.execute("INSERT OR REPLACE INTO route_overrides (key, custom, title, topic, "
+               "extra_domains, extra_cidrs, excluded_domains, excluded_cidrs, hidden) "
+               "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+               (o["key"], o["custom"], o["title"], o["topic"],
+                *[json.dumps(o[f]) for f in LIST_FIELDS], o["hidden"]))
+    db.commit()
+
+
+def apply_overrides() -> None:
+    """Собрать SERVICES / TOPICS заново: встроенный каталог + правки из БД."""
+    services = {k: dict(v) for k, v in BUILTIN_SERVICES.items()}
+    topics = [(t, title, list(keys)) for t, title, keys in BUILTIN_TOPICS]
+    by_topic = {t: keys for t, _, keys in topics}
+    for r in db.execute("SELECT key FROM route_overrides ORDER BY rowid"):
+        o = override(r["key"])
+        key = o["key"]
+        if o["custom"]:
+            topic = o["topic"] if o["topic"] in by_topic else "other"
+            services[key] = {"title": o["title"] or key, "domains": [], "sources": [],
+                             "custom": True}
+            by_topic[topic].append(key)
+        elif key not in services:
+            continue
+        if o["hidden"] and not o["custom"]:
+            services.pop(key)
+            for keys in by_topic.values():
+                if key in keys:
+                    keys.remove(key)
+            continue
+        for f in LIST_FIELDS:
+            services[key][f] = o[f]
+    with _lock:
+        SERVICES.clear()
+        SERVICES.update(services)
+        TOPICS[:] = topics
+        TOPIC_OF.clear()
+        TOPIC_OF.update({s: t for t, _, svcs in topics for s in svcs})
+
+
+def hidden_services() -> list[str]:
+    return [r["key"] for r in db.execute("SELECT key FROM route_overrides WHERE hidden=1 "
+                                         "AND custom=0") if r["key"] in BUILTIN_SERVICES]
+
+
+def _new_key() -> str:
+    n = 1
+    while f"c{n}" in SERVICES or override(f"c{n}")["custom"]:
+        n += 1
+    return f"c{n}"
+
+
+def _refresh_later(key: str) -> None:
+    """IP доменов для WireGuard — в фоне, чтобы не держать кнопку."""
+    def run():
+        try:
+            if key in SERVICES:
+                refresh_service(key)
+        except Exception as e:
+            log.debug("routes refresh %s: %s", key, e)
+    threading.Thread(target=run, daemon=True).start()
+
+
+def add_custom(title: str, topic: str, text: str) -> str:
+    """Новый сервис со своими доменами и подсетями. -> ключ."""
+    domains, cidrs = parse_list(text)
+    if not (domains or cidrs):
+        raise ValueError("Не нашёл ни одного домена или IP-адреса")
+    title = " ".join((title or "").split())[:MAX_TITLE]
+    if not title:
+        raise ValueError("Пустое название")
+    key = _new_key()
+    o = override(key)
+    topics = {t for t, _, _ in BUILTIN_TOPICS}
+    o.update(custom=1, title=title, topic=topic if topic in topics else "other",
+             extra_domains=domains, extra_cidrs=[str(n) for n in collapse(cidrs)])
+    _save_override(o)
+    apply_overrides()
+    _refresh_later(key)
+    return key
+
+
+def add_entries(key: str, text: str) -> tuple[int, int]:
+    """Добавить домены/подсети к сервису. -> (доменов, подсетей) новых."""
+    if key not in SERVICES:
+        raise KeyError(key)
+    domains, cidrs = parse_list(text)
+    if not (domains or cidrs):
+        raise ValueError("Не нашёл ни одного домена или IP-адреса")
+    cidrs = [str(n) for n in collapse(cidrs)]
+    o = override(key)
+    nd = [d for d in domains if d not in o["extra_domains"]]
+    nc = [c for c in cidrs if c not in o["extra_cidrs"]]
+    o["extra_domains"] += nd
+    o["extra_cidrs"] += nc
+    o["excluded_domains"] = [d for d in o["excluded_domains"] if d not in domains]
+    o["excluded_cidrs"] = [c for c in o["excluded_cidrs"] if c not in cidrs]
+    _save_override(o)
+    apply_overrides()
+    if nd:
+        _refresh_later(key)
+    return len(nd), len(nc)
+
+
+def remove_entries(key: str, text: str) -> tuple[int, int]:
+    """Убрать домены/подсети: добавленные админом удаляются, остальные (из источников)
+    запоминаются как исключённые. -> (доменов, подсетей)."""
+    if key not in SERVICES:
+        raise KeyError(key)
+    domains, cidrs = parse_list(text)
+    if not (domains or cidrs):
+        raise ValueError("Не нашёл ни одного домена или IP-адреса")
+    cidrs = [str(n) for n in collapse(cidrs)]
+    o = override(key)
+    o["extra_domains"] = [d for d in o["extra_domains"] if d not in domains]
+    o["extra_cidrs"] = [c for c in o["extra_cidrs"] if c not in cidrs]
+    o["excluded_domains"] = list(dict.fromkeys(o["excluded_domains"] + domains))
+    o["excluded_cidrs"] = list(dict.fromkeys(o["excluded_cidrs"] + cidrs))
+    _save_override(o)
+    apply_overrides()
+    return len(domains), len(cidrs)
+
+
+def reset_service(key: str) -> None:
+    """Убрать все правки встроенного сервиса (вернуть как в каталоге)."""
+    db.execute("DELETE FROM route_overrides WHERE key=? AND custom=0", (key,))
+    db.commit()
+    apply_overrides()
+
+
+def delete_service(key: str) -> None:
+    """Свой сервис — удалить совсем, встроенный — скрыть (можно вернуть)."""
+    o = override(key)
+    if o["custom"]:
+        db.execute("DELETE FROM route_overrides WHERE key=?", (key,))
+        db.commit()
+        with _lock:
+            _mem.pop(key, None)
+        try:
+            os.remove(_cache_path(key))
+        except OSError:
+            pass
+    elif key in BUILTIN_SERVICES:
+        o["hidden"] = 1
+        _save_override(o)
+    apply_overrides()
+
+
+def restore_service(key: str) -> None:
+    o = override(key)
+    if key in BUILTIN_SERVICES and o["hidden"]:
+        o["hidden"] = 0
+        _save_override(o)
+        apply_overrides()
+
+
+def is_custom(key: str) -> bool:
+    return bool(SERVICES.get(key, {}).get("custom"))
+
+
+apply_overrides()
 
 
 # ================================================================ подсети ===

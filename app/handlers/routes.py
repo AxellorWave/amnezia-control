@@ -87,7 +87,7 @@ def topic_view(uid: int, topic: str) -> tuple[str, InlineKeyboardMarkup]:
     rows = []
     for k in keys:
         on = k in p["services"]
-        rows.append([btn(routes.SERVICES[k]["title"], f"rt:t:{k}", icon="ok" if on else "offline")])
+        rows.append([btn(routes.SERVICES[k]["title"], f"rt:t:{k}", icon="online" if on else "offline")])
     all_on = all(k in p["services"] for k in keys)
     rows.append([btn("Снять все" if all_on else "Выбрать все", f"rt:a:{topic}",
                      icon="no" if all_on else "ok")])

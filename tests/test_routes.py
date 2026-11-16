@@ -86,3 +86,57 @@ def test_catalog_consistency():
     assert sorted(keys) == sorted(routes.SERVICES)
     data = routes.collect(["telegram", "ru_all"])
     assert "telegram.org" in data["domains"] and data["zones"] == ["ru", "xn--p1ai", "su"]
+
+
+def _clean_overrides():
+    routes.db.execute("DELETE FROM route_overrides")
+    routes.db.commit()
+    routes.apply_overrides()
+
+
+def test_custom_service_add_edit_delete(monkeypatch):
+    monkeypatch.setattr(routes, "_refresh_later", lambda key: None)
+    _clean_overrides()
+    key = routes.add_custom("Мой сервис", "games", "example.com\n203.0.113.10, 198.51.100.0/24")
+    assert routes.is_custom(key) and key in routes.TOPIC_OF and routes.TOPIC_OF[key] == "games"
+    e = routes.get_service(key)
+    assert "example.com" in e["domains"]
+    assert "203.0.113.10/32" in e["cidrs"] and "198.51.100.0/24" in e["cidrs"]
+    assert routes.add_entries(key, "example.org example.com") == (1, 0)
+    assert "example.org" in routes.get_service(key)["domains"]
+    routes.remove_entries(key, "203.0.113.10")
+    assert "203.0.113.10/32" not in routes.get_service(key)["cidrs"]
+    data = routes.collect([key])
+    assert "example.org" in data["domains"] and "198.51.100.0/24" in data["cidrs"]
+    routes.delete_service(key)
+    assert key not in routes.SERVICES and key not in routes.TOPIC_OF
+    assert all(key not in ks for _, _, ks in routes.TOPICS)
+
+
+def test_builtin_service_extras_hide_restore(monkeypatch):
+    monkeypatch.setattr(routes, "_refresh_later", lambda key: None)
+    _clean_overrides()
+    routes.add_entries("youtube", "my-yt-mirror.example 192.0.2.0/24")
+    e = routes.get_service("youtube")
+    assert "my-yt-mirror.example" in e["domains"] and "192.0.2.0/24" in e["cidrs"]
+    routes.remove_entries("youtube", "youtube.com")
+    assert "youtube.com" not in routes.get_service("youtube")["domains"]
+    routes.reset_service("youtube")
+    assert "youtube.com" in routes.get_service("youtube")["domains"]
+    assert "my-yt-mirror.example" not in routes.get_service("youtube")["domains"]
+    routes.delete_service("youtube")
+    assert "youtube" not in routes.SERVICES and routes.hidden_services() == ["youtube"]
+    routes.save_prefs(555, "include", ["youtube", "telegram"])
+    assert routes.get_prefs(555)["services"] == ["telegram"]
+    routes.restore_service("youtube")
+    assert "youtube" in routes.SERVICES and routes.TOPIC_OF["youtube"] == "video"
+    _clean_overrides()
+
+
+def test_add_custom_rejects_empty(monkeypatch):
+    monkeypatch.setattr(routes, "_refresh_later", lambda key: None)
+    import pytest
+    with pytest.raises(ValueError):
+        routes.add_custom("X", "games", "просто текст")
+    with pytest.raises(ValueError):
+        routes.add_custom("  ", "games", "example.com")
