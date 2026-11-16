@@ -6,11 +6,11 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.types import BotCommand
 
-from . import detect, geo
+from . import detect, geo, sub_server
 from .config import ADMIN_IDS, BOT_TOKEN
 from .db import touch_bot
 from .handlers import admin, protocols_admin, user
-from .protocols import awg
+from .protocols import awg, hysteria
 from .protocols.awg import server_info
 from .traffic import traffic_loop
 from .ui import btn, em, kb, notify
@@ -52,6 +52,7 @@ async def main():
     dp.include_router(protocols_admin.router)
     await bot.set_my_commands([BotCommand(command="start", description="Главное меню"),
                                BotCommand(command="help", description="Как подключиться")])
+    await sub_server.start()
     if not detect.any_installed():
         for admin_id in ADMIN_IDS:
             await notify(bot, admin_id, f"<h3>{em('protocols')} VPN ещё не настроен</h3>"
@@ -63,7 +64,8 @@ async def main():
     log.info("Сервер %s: %s", geo.location()["ip"], geo.location()["country"] or "страна неизвестна")
     _bg.extend([asyncio.create_task(geo.geo_loop()),
                 asyncio.create_task(traffic_loop()),
-                asyncio.create_task(detect.detect_loop())])
+                asyncio.create_task(detect.detect_loop()),
+                asyncio.create_task(hysteria.renew_loop())])
     await dp.start_polling(bot)
 
 

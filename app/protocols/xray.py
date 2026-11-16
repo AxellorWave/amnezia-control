@@ -205,10 +205,10 @@ def wait_started(timeout: float = 20) -> None:
         state = (c or {}).get("State") or {}
         if not state.get("Running") and state.get("Status") in ("exited", "dead"):
             break
-        logs = docker("logs", "--tail", "50", CONTAINER, check=False, timeout=30)
+        logs = docker_util.logs(CONTAINER, 50)
         if "started" in logs.lower():
             return
-    logs = docker("logs", "--tail", "30", CONTAINER, check=False, timeout=30)
+    logs = docker_util.logs(CONTAINER, 30)
     raise RuntimeError(f"Xray не запустился:\n{logs.strip()[-1200:]}")
 
 

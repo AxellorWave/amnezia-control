@@ -31,6 +31,13 @@ def docker(*args: str, stdin: str | bytes | None = None, check: bool = True,
     return out
 
 
+def logs(container: str, tail: int = 50) -> str:
+    """Логи контейнера (stdout и stderr вместе)."""
+    r = subprocess.run(["docker", "logs", "--tail", str(tail), container], capture_output=True,
+                       text=True, timeout=30)
+    return re.sub(r"\x1b\[[0-9;]*m", "", r.stdout + r.stderr)
+
+
 def docker_bytes(*args: str, timeout: float | None = 600) -> bytes:
     r = subprocess.run(["docker", *args], capture_output=True, timeout=timeout)
     if r.returncode != 0:

@@ -15,6 +15,8 @@ from ..access import is_admin
 from ..db import db, now
 from ..progress import Progress
 from ..protocols import awg, awg_install, xray
+from ..protocols import hysteria
+from ..protocols.hysteria import HY2
 from ..protocols.xray import XRAY
 from ..ui import btn, em, esc, kb, kv, show, table
 from .admin import admin_only
@@ -184,7 +186,41 @@ WIZARDS: dict[str, dict] = {
         ],
         "precheck": lambda p: xray_precheck(p),
     },
+    "hy2": {
+        "title": "Hysteria 2",
+        "about": ("Официальный образ <code>tobyxdd/hysteria</code> (версия зафиксирована), "
+                  "QUIC по UDP. Пароли проверяет бот по своей базе, обфускация Salamander, "
+                  "congestion BBR. Ссылки попадут в «Мою подписку»."),
+        "hint": ("Сертификат «по домену» — Let's Encrypt для VPN_HOST, нужен свободный 80/TCP на "
+                 "время выпуска, продление — автоматически. «Самоподписанный» — работает и без "
+                 "домена, отпечаток (pinSHA256) уходит в ссылку. Brutal не включаем: при "
+                 "джиттере он ведёт себя плохо, BBR надёжнее."),
+        "fields": [
+            {"key": "port", "label": "Порт", "kind": "port", "proto": "udp", "default": 443},
+            {"key": "cert", "label": "Сертификат", "kind": "choice", "default": "self",
+             "choices": [("self", "самоподписанный"), ("domain", "Let's Encrypt по домену")]},
+            {"key": "obfs", "label": "Обфускация Salamander", "kind": "bool", "default": True},
+            {"key": "block_ru", "label": "Блок RU-доменов и IP", "kind": "bool", "default": True},
+        ],
+        "precheck": lambda p: hy2_precheck(p),
+    },
 }
+
+
+def hy2_precheck(p: dict) -> list[str]:
+    probs = []
+    for o in detect.STATE.get("foreign", []):
+        if "Hysteria" in o["title"] and ("udp", int(p["port"])) in o["ports"]:
+            probs.append(f"{em('error')} на порту {p['port']}/udp уже стоит чужая Hysteria "
+                         f"(<code>{esc(o['container'])}</code>)")
+    if p.get("cert") == "domain":
+        if hysteria.is_ip(hysteria.VPN_HOST):
+            probs.append(f"{em('error')} VPN_HOST — IP, а не домен: выбери самоподписанный")
+        busy = ports.check([("tcp", 80)])
+        if busy:
+            probs.append(f"{em('error')} для Let's Encrypt нужен свободный 80/TCP: "
+                         f"занят ({esc(list(busy.values())[0])})")
+    return probs
 
 
 def xray_precheck(p: dict) -> list[str]:
@@ -386,6 +422,16 @@ def run_install(pid: str, p: dict, progress) -> dict:
                    ("Блок RU", "да" if st["block_ru"] else "нет"),
                    ("Образ", f"<code>{esc(st['image'])}</code>")]
         return {"container": xray.CONTAINER, "settings": st, "summary": summary,
+                "skip_save": True}
+    if pid == "hy2":
+        st = HY2.install(p, progress)
+        summary = [("Порт", f"<code>{st['port']}/udp</code>"),
+                   ("Сертификат", "самоподписанный (pinSHA256)" if st["self_signed"]
+                    else f"Let's Encrypt · <code>{esc(st['domain'])}</code>"),
+                   ("Salamander", "да" if st["obfs"] else "нет"),
+                   ("Блок RU", "да" if st["block_ru"] else "нет"),
+                   ("Образ", f"<code>{esc(st['image'])}</code>")]
+        return {"container": hysteria.CONTAINER, "settings": st, "summary": summary,
                 "skip_save": True}
     raise RuntimeError("Установка этого протокола не поддерживается")
 
