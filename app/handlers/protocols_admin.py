@@ -129,6 +129,8 @@ def protocol_card(pid: str) -> tuple[str, InlineKeyboardMarkup]:
         rows.append([btn("Обновить Xray", "pxu", icon="download")])
     if e and e["ports"] or protocol_ports(pid):
         rows.append([btn("Открыть порты в файрволе хоста", f"pfw:{pid}", icon="lock")])
+    if e:
+        rows.append([btn("Удалить", f"un:{pid}", style="danger", icon="uninstall")])
     rows.append([btn("Протоколы", "proto", icon="back")])
     return text, kb(*rows)
 
@@ -145,6 +147,8 @@ def amnezia_xray_card() -> tuple[str, InlineKeyboardMarkup]:
              f"приложении AmneziaVPN. Бот ставит оригинальный XTLS Xray-core — его можно "
              f"поставить вместо этого (клиенты приложения перестанут работать).</blockquote>")
     return text, kb([btn("Архив /opt/amnezia/xray", "bk:amnezia", icon="backup")],
+                    [btn("Заменить на оригинальный Xray", "un:amnezia_xray", style="danger",
+                         icon="xray")],
                     [btn("Протоколы", "proto", icon="back")])
 
 

@@ -10,7 +10,7 @@ from . import detect, geo, sub_server, subsync
 from .config import ADMIN_IDS, BOT_TOKEN
 from .db import touch_bot
 from . import backup
-from .handlers import admin, backup_admin, protocols_admin, user
+from .handlers import admin, backup_admin, protocols_admin, uninstall, user
 from .protocols import awg, hysteria
 from .protocols.awg import server_info
 from .traffic import traffic_loop
@@ -52,6 +52,7 @@ async def main():
     dp.include_router(admin.router)
     dp.include_router(protocols_admin.router)
     dp.include_router(backup_admin.router)
+    dp.include_router(uninstall.router)
     await bot.set_my_commands([BotCommand(command="start", description="Главное меню"),
                                BotCommand(command="help", description="Как подключиться")])
     sub_server.set_bot(bot)
