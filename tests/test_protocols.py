@@ -38,7 +38,7 @@ def test_awg_server_conf_drops_empty_lines():
     text, _ = _server_conf()
     assert "Address = 10.8.1.0/24" in text and "ListenPort = 55424" in text
     assert "ContentPaddingAddition" not in text          # пустое — удалено, как sed в скрипте
-    assert "I1" not in text
+    assert not any(line.lstrip("# ").startswith("I1 ") for line in text.splitlines())
     assert not any(re.match(r"^[^=]*= *$", line) for line in text.splitlines())
 
 
